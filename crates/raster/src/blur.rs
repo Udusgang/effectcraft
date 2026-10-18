@@ -188,19 +188,24 @@ pub fn radial_blur(img: &Image, center: (f64, f64), amount: f64, zoom: bool) -> 
     if amount.abs() < 1e-6 {
         return img.clone();
     }
-    let n = 32usize;
+    const N: usize = 32;
+    // The sample offsets depend only on the sample index: the zoom factor, or the spin's
+    // (sin, cos), computed once instead of per pixel (bit-identical to computing them inline).
+    let steps: [(f64, f64); N] = std::array::from_fn(|i| {
+        let t = i as f64 / (N - 1) as f64 - 0.5;
+        if zoom { (1.0 + t * amount, 0.0) } else { (t * amount).to_radians().sin_cos() }
+    });
+    let n = N;
     let mut out = Image::new(img.width, img.height);
     out.rows_mut().for_each(|(y, row)| {
         for (x, px) in row.iter_mut().enumerate() {
             let (vx, vy) = (x as f64 + 0.5 - center.0, y as f64 + 0.5 - center.1);
             let mut acc = [0.0f32; 4];
-            for i in 0..n {
-                let t = i as f64 / (n - 1) as f64 - 0.5;
+            for &(a, b) in &steps {
                 let (sx, sy) = if zoom {
-                    let k = 1.0 + t * amount;
-                    (center.0 + vx * k, center.1 + vy * k)
+                    (center.0 + vx * a, center.1 + vy * a)
                 } else {
-                    let (s, c) = (t * amount).to_radians().sin_cos();
+                    let (s, c) = (a, b);
                     (center.0 + vx * c - vy * s, center.1 + vx * s + vy * c)
                 };
                 let p = img.sample_bilinear(sx, sy);

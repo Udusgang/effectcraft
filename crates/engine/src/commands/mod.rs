@@ -53,6 +53,7 @@ mod proxy;
 pub mod puppet;
 mod query;
 mod quick_offset;
+mod reel;
 mod relink;
 pub(crate) mod relink_moved;
 mod render_queue;
@@ -222,6 +223,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(settings::specs());
         v.extend(app_more::specs());
         v.extend(keys_more::specs());
+        v.extend(reel::specs());
         v.extend(essential::specs());
         v.extend(expr_tools::specs());
         v.extend(proxy::specs());
