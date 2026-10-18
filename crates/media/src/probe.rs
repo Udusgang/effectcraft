@@ -19,7 +19,13 @@ pub fn probe(path: impl AsRef<Path>) -> Result<Footage> {
     // A movie is read in place (its index), not loaded whole.
     if let Some(src) = crate::stream::probe_source(path) {
         let mut f = footage_from_info(&path.to_string_lossy(), src?.info());
-        let turn = crate::stream::movie_header(path).map_or(Orientation::NoTransforms, |h| video_turn(&h));
+        let header = crate::stream::movie_header(path);
+        if let Some(d) = header.as_deref().and_then(presentation_duration)
+            && d < f.duration
+        {
+            f.duration = d;
+        }
+        let turn = header.map_or(Orientation::NoTransforms, |h| video_turn(&h));
         turn_footage(&mut f, turn);
         return Ok(f);
     }
@@ -95,8 +101,14 @@ pub fn probe_bytes(path: &str, bytes: Arc<[u8]>) -> Result<Footage> {
     }
     let name = Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string());
     let turn = video_turn(&bytes);
+    let shown = presentation_duration(&bytes);
     let src = filmcraft_codecs::open_bytes(&name, bytes)?;
     let mut f = footage_from_info(path, src.info());
+    if let Some(d) = shown
+        && d < f.duration
+    {
+        f.duration = d;
+    }
     turn_footage(&mut f, turn);
     Ok(f)
 }
@@ -234,6 +246,21 @@ pub(crate) fn load_oriented(bytes: &[u8], fmt: Option<image::ImageFormat>) -> im
     let mut img = image::DynamicImage::from_decoder(dec)?;
     img.apply_orientation(orientation);
     Ok(img)
+}
+
+/// How long an MP4/MOV movie plays when its edit list starts it after the first stored frame. A
+/// stream-copied cut (`ffmpeg -ss … -c copy`, YouTube range downloads) keeps the frames from the
+/// keyframe before the cut point and hides them with an edit list; the frames are shown from the
+/// right time, but the media duration still counts the hidden pre-roll, which left a frozen tail
+/// that long at the end of the layer. The edit list states the presentation length itself (its
+/// edits' durations, in the movie timescale); an encoder's B‑frame delay edit spans the whole
+/// media, so ordinary movies keep their length. `None`: no edit list, or one without durations.
+pub(crate) fn presentation_duration(bytes: &[u8]) -> Option<Tick> {
+    let file = filmcraft_isobmff::open(bytes).ok()?;
+    let track = |kind| file.tracks.iter().find(|t| t.kind == kind && !t.edits.is_empty());
+    let t = track(filmcraft_isobmff::TrackKind::Video).or_else(|| track(filmcraft_isobmff::TrackKind::Audio))?;
+    let total = t.edits.iter().fold(0u64, |sum, e| sum.saturating_add(e.segment_duration));
+    (total > 0 && file.timescale > 0).then(|| Tick::from_rational(total as i64, 1, i64::from(file.timescale)))
 }
 
 /// The rotation an MP4/MOV movie is shown with (a phone held upright records sideways frames and

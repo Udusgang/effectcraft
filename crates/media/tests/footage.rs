@@ -336,6 +336,40 @@ fn resampled_audio_read_in_frame_pieces_matches_ffmpeg() {
     }
 }
 
+/// A stream-copied cut of a movie with a keyframe every second, as YouTube range downloads and
+/// `ffmpeg -ss … -c copy` make: the file keeps the frames from the keyframe before the cut point
+/// (1 s) and an edit list hides them, so it plays 1.5–3.5 s of the source.
+fn copied_cut_mp4() -> Option<(PathBuf, PathBuf)> {
+    let src = ffmpeg_fixture(
+        "gop30_4s.mp4",
+        &["-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30:duration=4", "-c:v", "libx264", "-g", "30", "-keyint_min", "30", "-sc_threshold", "0", "-pix_fmt", "yuv420p"],
+    )?;
+    let src_arg = src.to_string_lossy().to_string();
+    let cut = ffmpeg_fixture("gop30_cut_1.5-3.5.mp4", &["-ss", "1.5", "-to", "3.5", "-i", &src_arg, "-c", "copy"])?;
+    Some((src, cut))
+}
+
+/// The cut lasts as long as it plays (its edit list says ~2.13 s: the 2 s asked for, rounded out
+/// to whole stored frames — ffprobe agrees), not as long as its stored frames (77, ~2.57 s with
+/// the hidden pre-roll) — before, its layer ended on a frozen frame that long — and it starts on
+/// the source's frame at the cut point.
+#[test]
+fn stream_copied_cut_lasts_as_long_as_it_plays() {
+    let Some((src, cut)) = copied_cut_mp4() else { return };
+    let f = probe(&cut).expect("probe");
+    let secs = f.duration.0 as f64 / TICKS_PER_SECOND as f64;
+    assert!((2.0..2.25).contains(&secs), "duration {secs:.3} s");
+    let in_memory = probe_bytes("cut.mp4", std::fs::read(&cut).expect("read").into()).expect("probe bytes");
+    assert_eq!(in_memory.duration, f.duration);
+    let source = probe(&src).expect("probe source");
+    assert!((source.duration.0 as f64 / TICKS_PER_SECOND as f64 - 4.0).abs() < 0.05, "an uncut movie keeps its length");
+    let pool = MediaPool::new();
+    let first = pool.frame(ItemId(1), &f, Tick::ZERO).expect("cut frame");
+    let at_cut = pool.frame(ItemId(2), &source, t_of(source.frame_rate, 45)).expect("source frame");
+    let db = psnr(&first, &at_cut);
+    assert!(db > 40.0, "first frame of the cut vs source at 1.5 s: {db:.2} dB");
+}
+
 /// The H.264 fixture with the rotation part of its video track header's matrix (`[a b; c d]`,
 /// 16.16 fixed point) replaced: what a phone writes for a movie shot with the camera turned.
 fn turned_mp4(p: &Path, abcd: [i32; 4]) -> Arc<[u8]> {
