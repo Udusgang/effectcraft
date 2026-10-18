@@ -57,7 +57,10 @@ fn import_aep(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("file.importAep", "expected an After Effects .aep project"));
     }
     let dir = std::path::Path::new(&path).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-    let allow_losses = b_p(p, "allowLosses").unwrap_or(false);
+    // Opening a template is the point of the menu command: bring in everything that maps and
+    // list the rest (`losses`, and a toast), rather than refusing the whole file over one gap.
+    // `allowLosses: false` keeps the strict all-or-nothing behaviour.
+    let allow_losses = b_p(p, "allowLosses").unwrap_or(true);
     // `wait: false`: the export (the After Effects reader, minutes for a big project) runs on a
     // background thread; the import applies on the session's thread when it is done.
     if b_p(p, "wait") == Some(false) {
@@ -80,7 +83,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "After Effects Project...",
             ["File", "Import"],
             None,
-            "{path (.aep), allowLosses?: bool (inspect incomplete import), wait? (false: export in the background)}",
+            "{path (.aep), allowLosses?: bool (default true: import what maps and report the rest; false refuses any gap), wait? (false: export in the background)}",
             always,
             import_aep
         ),

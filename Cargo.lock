@@ -1187,6 +1187,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "effectcraft-aep"
+version = "0.12.0"
+dependencies = [
+ "effectcraft-color",
+ "effectcraft-effects",
+ "effectcraft-keyframe",
+ "effectcraft-project",
+ "effectcraft-render",
+ "effectcraft-segment",
+ "effectcraft-time",
+ "image",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "effectcraft-automation"
 version = "0.12.0"
 dependencies = [
@@ -1251,6 +1268,7 @@ name = "effectcraft-engine"
 version = "0.12.0"
 dependencies = [
  "craft-docpath",
+ "effectcraft-aep",
  "effectcraft-color",
  "effectcraft-effects",
  "effectcraft-geom",
@@ -1620,6 +1638,7 @@ name = "effectcraft-text"
 version = "0.12.0"
 dependencies = [
  "effectcraft-keyframe",
+ "effectcraft-segment",
  "harfrust",
  "kurbo",
  "skrifa",

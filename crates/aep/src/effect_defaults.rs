@@ -59,9 +59,32 @@ fn lumetri(raw: &str, child: &Json, effect: &Json) -> bool {
     }
 }
 
+/// VR Chromatic Aberrations controls with no native counterpart, at the values AE saves when
+/// they were never touched: the layer-centre Point of Interest, Auto VR Properties off and the
+/// full 360° × 180° equirectangular view, which is what the native effect assumes.
+fn vr_chromatic_default(raw: &str, child: &Json) -> bool {
+    if !static_value(child) {
+        return false;
+    }
+    let value = &child["value"];
+    match raw {
+        "Mettle SkyBox Chromatic Aberrat-0003" => child["authored"].as_bool() == Some(false),
+        "Mettle SkyBox Chromatic Aberrat-0009" => same(value, &json!(0)),
+        "Mettle SkyBox Chromatic Aberrat-0010" => same(value, &json!(360)),
+        "Mettle SkyBox Chromatic Aberrat-0011" => same(value, &json!(180)),
+        _ => false,
+    }
+}
+
 pub(crate) fn inert(effect_id: &str, raw: &str, child: &Json, effect: &Json) -> bool {
     match effect_id {
         "ec.color.lumetri" => lumetri(raw, child, effect),
+        // CC RepeTile's Blend Borders at 0 blends nothing, which is what the native effect
+        // (no blend control) renders; any other value stays a loss.
+        "ec.stylize.ccrepetile" => raw == "CC RepeTile-0006" && static_value(child) && same(&child["value"], &json!(0)),
+        // Radial Blur's hidden Random Seed at its default 0 changes nothing the native blur draws.
+        "ec.blur.radial" => raw == "ADBE Radial Blur-0006" && static_value(child) && same(&child["value"], &json!(0)),
+        "ec.vr.chromaticaberrations" => vr_chromatic_default(raw, child),
         _ => false,
     }
 }
@@ -89,5 +112,33 @@ mod tests {
         assert!(!inert("ec.color.lumetri", "ADBE Lumetri-0065", &expressed, &effect));
         assert!(inert("ec.color.lumetri", "ADBE Lumetri-0127", &p("ADBE Lumetri-0127", json!(1)), &effect));
         assert!(!inert("ec.color.lumetri", "ADBE Lumetri-0127", &p("ADBE Lumetri-0127", json!(2)), &effect));
+    }
+
+    #[test]
+    fn repetile_blend_borders_only_inert_at_zero() {
+        let effect = json!({"children":[]});
+        assert!(inert("ec.stylize.ccrepetile", "CC RepeTile-0006", &p("CC RepeTile-0006", json!(0.0)), &effect));
+        assert!(!inert("ec.stylize.ccrepetile", "CC RepeTile-0006", &p("CC RepeTile-0006", json!(25.0)), &effect));
+        let mut keyed = p("CC RepeTile-0006", json!(0.0));
+        keyed["keyframes"] = json!([{"time":0}]);
+        assert!(!inert("ec.stylize.ccrepetile", "CC RepeTile-0006", &keyed, &effect));
+        assert!(!inert("ec.stylize.ccrepetile", "CC RepeTile-0005", &p("CC RepeTile-0005", json!(0)), &effect));
+    }
+
+    #[test]
+    fn radial_blur_seed_and_vr_aberration_defaults_only() {
+        let effect = json!({"children":[]});
+        assert!(inert("ec.blur.radial", "ADBE Radial Blur-0006", &p("ADBE Radial Blur-0006", json!(0)), &effect));
+        assert!(!inert("ec.blur.radial", "ADBE Radial Blur-0006", &p("ADBE Radial Blur-0006", json!(3)), &effect));
+        let vr = "ec.vr.chromaticaberrations";
+        let mut poi = p("Mettle SkyBox Chromatic Aberrat-0003", json!([960.0, 540.0]));
+        poi["authored"] = json!(false);
+        assert!(inert(vr, "Mettle SkyBox Chromatic Aberrat-0003", &poi, &effect));
+        poi["authored"] = json!(true);
+        assert!(!inert(vr, "Mettle SkyBox Chromatic Aberrat-0003", &poi, &effect));
+        assert!(inert(vr, "Mettle SkyBox Chromatic Aberrat-0009", &p("Mettle SkyBox Chromatic Aberrat-0009", json!(0)), &effect));
+        assert!(inert(vr, "Mettle SkyBox Chromatic Aberrat-0010", &p("Mettle SkyBox Chromatic Aberrat-0010", json!(360.0)), &effect));
+        assert!(!inert(vr, "Mettle SkyBox Chromatic Aberrat-0010", &p("Mettle SkyBox Chromatic Aberrat-0010", json!(90.0)), &effect));
+        assert!(inert(vr, "Mettle SkyBox Chromatic Aberrat-0011", &p("Mettle SkyBox Chromatic Aberrat-0011", json!(180.0)), &effect));
     }
 }

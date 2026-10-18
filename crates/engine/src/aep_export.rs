@@ -14,17 +14,34 @@ fn bundled_exporter(exe: &Path) -> Option<PathBuf> {
     Some(contents.join("Resources/aep_ir_export.py"))
 }
 
+/// Windows and Linux: an `aep` folder beside the executable holds the exporter and, optionally,
+/// a `venv` with py-aep. Only the executable's own folder is looked at, never its parents, so it
+/// is trusted exactly as much as the executable next to it.
+fn sibling_exporter(exe: &Path) -> Option<PathBuf> {
+    Some(exe.parent()?.join("aep").join("aep_ir_export.py"))
+}
+
+fn sibling_python(exe: &Path) -> Option<PathBuf> {
+    let venv = exe.parent()?.join("aep").join("venv");
+    Some(if cfg!(windows) { venv.join("Scripts").join("python.exe") } else { venv.join("bin").join("python3") })
+}
+
 pub(super) fn convert(path: &str) -> io::Result<Vec<u8>> {
+    let exe = std::env::current_exe().ok();
     let script = std::env::var_os("EFFECTCRAFT_AEP_EXPORTER")
         .map(PathBuf::from)
         .or_else(|| {
-            if !cfg!(target_os = "macos") {
-                return None;
-            }
-            bundled_exporter(&std::env::current_exe().ok()?).filter(|p| p.is_file())
+            let exe = exe.as_deref()?;
+            let found = if cfg!(target_os = "macos") { bundled_exporter(exe) } else { sibling_exporter(exe) };
+            found.filter(|p| p.is_file())
         })
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "AEP exporter script missing; set EFFECTCRAFT_AEP_EXPORTER"))?;
-    let python = std::env::var_os("EFFECTCRAFT_AEP_PYTHON").unwrap_or_else(|| "python3".into());
+    let python = std::env::var_os("EFFECTCRAFT_AEP_PYTHON")
+        .or_else(|| {
+            let exe = exe.as_deref()?;
+            sibling_python(exe).filter(|p| p.is_file()).map(PathBuf::into_os_string)
+        })
+        .unwrap_or_else(|| if cfg!(windows) { "python".into() } else { "python3".into() });
     let mut command = Command::new(python);
     command.arg(script).arg(path).arg("--stdout").env("PYTHONIOENCODING", "utf-8");
     capture(&mut command, 512 * 1024 * 1024)
@@ -96,6 +113,15 @@ mod tests {
         ] {
             assert_eq!(bundled_exporter(Path::new(exe)), None, "{exe}");
         }
+    }
+
+    #[test]
+    fn sibling_exporter_is_only_next_to_the_executable() {
+        let exe = Path::new("apps").join("EffectCraft").join("effectcraft.exe");
+        let dir = Path::new("apps").join("EffectCraft").join("aep");
+        assert_eq!(sibling_exporter(&exe), Some(dir.join("aep_ir_export.py")));
+        let python = sibling_python(&exe).unwrap();
+        assert!(python.starts_with(dir.join("venv")), "{python:?}");
     }
 
     #[cfg(unix)]

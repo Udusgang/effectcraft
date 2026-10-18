@@ -52,7 +52,9 @@ pub(crate) fn effect_id(ae_match: &str) -> Option<&'static str> {
         "ADBE Minimax" => "ec.channel.minimax",
         "ADBE Mosaic" => "ec.stylize.mosaic",
         "ADBE Motion Blur" => "ec.blur.directional",
+        "ADBE Noise HLS Auto2" => "ec.noise.noisehlsauto",
         "ADBE Noise2" => "ec.noise.noise",
+        "ADBE Optics Compensation" => "ec.distort.opticscompensation",
         "ADBE Playgnd" => "ec.sim.particleplayground",
         "ADBE Point Control" => "ec.control.point",
         "ADBE Point3D Control" => "ec.control.point3d",
@@ -100,6 +102,7 @@ pub(crate) fn effect_id(ae_match: &str) -> Option<&'static str> {
         "CC Pixel Polly" => "ec.sim.ccpixelpolly",
         "CC Radial Blur" => "ec.blur.ccradial",
         "CC Radial Fast Blur" => "ec.blur.ccradialfast",
+        "CC RepeTile" => "ec.stylize.ccrepetile",
         "CC Sphere" => "ec.perspective.ccsphere",
         "CC Spotlight" => "ec.perspective.ccspotlight",
         "CC Star Burst" => "ec.sim.ccstarburst",
@@ -332,6 +335,7 @@ pub(crate) fn param_id(effect_id: &str, ae_param_match: &str) -> Option<&'static
         ("ec.noise.fractal", "ADBE Fractal Noise-0023") => "evolution",
         ("ec.noise.fractal", "ADBE Fractal Noise-0025") => "evolutionOptions/cycleEvolution",
         ("ec.noise.fractal", "ADBE Fractal Noise-0026") => "evolutionOptions/cycle",
+        ("ec.noise.fractal", "ADBE Fractal Noise-0027") => "evolutionOptions/seed",
         ("ec.noise.fractal", "ADBE Fractal Noise-0029") => "opacity",
         ("ec.noise.fractal", "ADBE Fractal Noise-0030") => "blendingMode",
         ("ec.noise.fractal", "ADBE Fractal Noise-0031") => "transform/perspectiveOffset",
@@ -350,6 +354,7 @@ pub(crate) fn param_id(effect_id: &str, ae_param_match: &str) -> Option<&'static
         ("ec.distort.transform", "ADBE Geometry2-0006") => "skewAxis",
         ("ec.distort.transform", "ADBE Geometry2-0007") => "rotation",
         ("ec.distort.transform", "ADBE Geometry2-0008") => "opacity",
+        ("ec.distort.transform", "ADBE Geometry2-0009") => "useCompositionShutterAngle",
         ("ec.distort.transform", "ADBE Geometry2-0010") => "shutterAngle",
         ("ec.distort.transform", "ADBE Geometry2-0011") => "uniform",
         ("ec.distort.transform", "ADBE Geometry2-0012") => "sampling",
@@ -473,6 +478,18 @@ pub(crate) fn param_id(effect_id: &str, ae_param_match: &str) -> Option<&'static
         ("ec.noise.noise", "ADBE Noise2-0001") => "amount",
         ("ec.noise.noise", "ADBE Noise2-0002") => "color",
         ("ec.noise.noise", "ADBE Noise2-0003") => "clip",
+        ("ec.noise.noisehlsauto", "ADBE Noise HLS Auto2-0001") => "noise",
+        ("ec.noise.noisehlsauto", "ADBE Noise HLS Auto2-0002") => "hue",
+        ("ec.noise.noisehlsauto", "ADBE Noise HLS Auto2-0003") => "lightness",
+        ("ec.noise.noisehlsauto", "ADBE Noise HLS Auto2-0004") => "saturation",
+        ("ec.noise.noisehlsauto", "ADBE Noise HLS Auto2-0005") => "grainSize",
+        ("ec.noise.noisehlsauto", "ADBE Noise HLS Auto2-0006") => "noiseAnimationSpeed",
+        ("ec.distort.opticscompensation", "ADBE Optics Compensation-0001") => "fieldOfView",
+        ("ec.distort.opticscompensation", "ADBE Optics Compensation-0002") => "reverseLensDistortion",
+        ("ec.distort.opticscompensation", "ADBE Optics Compensation-0003") => "fovOrientation",
+        ("ec.distort.opticscompensation", "ADBE Optics Compensation-0004") => "viewCenter",
+        ("ec.distort.opticscompensation", "ADBE Optics Compensation-0005") => "optimalPixels",
+        ("ec.distort.opticscompensation", "ADBE Optics Compensation-0006") => "resize",
         ("ec.sim.particleplayground", "ADBE Playgnd-0102") => "cannon/barrelRadius",
         ("ec.sim.particleplayground", "ADBE Playgnd-0103") => "cannon/particlesPerSecond",
         ("ec.sim.particleplayground", "ADBE Playgnd-0106") => "cannon/directionRandomSpread",
@@ -935,6 +952,11 @@ pub(crate) fn param_id(effect_id: &str, ae_param_match: &str) -> Option<&'static
         ("ec.stylize.ccvignette", "CS Vignette-0002") => "angleOfView",
         ("ec.stylize.ccvignette", "CS Vignette-0003") => "center",
         ("ec.stylize.ccvignette", "CS Vignette-0005") => "pinHighlights",
+        ("ec.stylize.ccrepetile", "CC RepeTile-0001") => "expandRight",
+        ("ec.stylize.ccrepetile", "CC RepeTile-0002") => "expandLeft",
+        ("ec.stylize.ccrepetile", "CC RepeTile-0003") => "expandDown",
+        ("ec.stylize.ccrepetile", "CC RepeTile-0004") => "expandUp",
+        ("ec.stylize.ccrepetile", "CC RepeTile-0005") => "tiling",
         ("ec.sim.ccrainfall", "CSRainfall-0001") => "drops",
         ("ec.sim.ccrainfall", "CSRainfall-0002") => "size",
         ("ec.sim.ccrainfall", "CSRainfall-0003") => "sceneDepth",
@@ -1005,11 +1027,9 @@ pub(crate) fn param_id(effect_id: &str, ae_param_match: &str) -> Option<&'static
         ("ec.keying.keylight", "Keylight 906-0076") => "sourceCrops/cropRight",
         ("ec.keying.keylight", "Keylight 906-0077") => "sourceCrops/cropTop",
         ("ec.keying.keylight", "Keylight 906-0078") => "sourceCrops/cropBottom",
+        // Point of Interest (0003), Auto VR Properties (0009) and the 360°/180° FOV (0010, 0011)
+        // have no native control; effect_defaults accepts their untouched defaults.
         ("ec.vr.chromaticaberrations", "Mettle SkyBox Chromatic Aberrat-0002") => "frameLayout",
-        ("ec.vr.chromaticaberrations", "Mettle SkyBox Chromatic Aberrat-0003") => "pointOfInterest",
-        ("ec.vr.chromaticaberrations", "Mettle SkyBox Chromatic Aberrat-0009") => "autoVrProperties",
-        ("ec.vr.chromaticaberrations", "Mettle SkyBox Chromatic Aberrat-0010") => "horizontalFov",
-        ("ec.vr.chromaticaberrations", "Mettle SkyBox Chromatic Aberrat-0011") => "verticalFov",
         ("ec.vr.chromaticaberrations", "Mettle SkyBox Chromatic Aberrat-0004") => "aberrationRed",
         ("ec.vr.chromaticaberrations", "Mettle SkyBox Chromatic Aberrat-0005") => "aberrationGreen",
         ("ec.vr.chromaticaberrations", "Mettle SkyBox Chromatic Aberrat-0006") => "aberrationBlue",
@@ -1134,6 +1154,21 @@ mod tests {
         ] {
             assert_eq!(param_id("ec.color.lumetri", raw), Some(native), "{raw}");
         }
+    }
+
+    #[test]
+    fn hls_auto_optics_and_repetile_map_to_native_effects() {
+        assert_eq!(effect_id("ADBE Noise HLS Auto2"), Some("ec.noise.noisehlsauto"));
+        assert_eq!(effect_id("ADBE Optics Compensation"), Some("ec.distort.opticscompensation"));
+        assert_eq!(effect_id("CC RepeTile"), Some("ec.stylize.ccrepetile"));
+        assert_eq!(param_id("ec.noise.noisehlsauto", "ADBE Noise HLS Auto2-0003"), Some("lightness"));
+        assert_eq!(param_id("ec.noise.noisehlsauto", "ADBE Noise HLS Auto2-0006"), Some("noiseAnimationSpeed"));
+        assert_eq!(param_id("ec.distort.opticscompensation", "ADBE Optics Compensation-0004"), Some("viewCenter"));
+        assert_eq!(param_id("ec.distort.opticscompensation", "ADBE Optics Compensation-0006"), Some("resize"));
+        assert_eq!(param_id("ec.stylize.ccrepetile", "CC RepeTile-0001"), Some("expandRight"));
+        assert_eq!(param_id("ec.stylize.ccrepetile", "CC RepeTile-0005"), Some("tiling"));
+        // Blend Borders has no native control; effect_defaults decides whether it matters.
+        assert_eq!(param_id("ec.stylize.ccrepetile", "CC RepeTile-0006"), None);
     }
 
     #[test]

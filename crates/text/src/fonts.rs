@@ -543,7 +543,7 @@ pub fn resolve(family: &str, style: &str) -> Resolved {
     // An unavailable PostScript cut such as `Inter-Light` can still use an installed
     // `Inter` Light face whose PostScript name changed between font releases.
     if let Some((base, cut)) = postscript_style_hint(family)
-        && let Some(mut r) = resolve_in(base, cut)
+        && let Some(mut r) = resolve_in(base, cut).or_else(|| resolve_squashed_family(base, cut))
     {
         r.missing = true; // The requested cut remains unresolved and can be relinked later.
         return r;
@@ -552,6 +552,20 @@ pub fn resolve(family: &str, style: &str) -> Resolved {
     let mut r = resolve_in(DEFAULT_FAMILY, style).unwrap_or(Resolved { face: 0, synth_bold: false, synth_italic: false, missing: true });
     r.missing = !family.is_empty() && !family.eq_ignore_ascii_case(DEFAULT_FAMILY);
     r
+}
+
+/// The family part of a PostScript name has no spaces, and a variable font's named instances
+/// (which After Effects saves, e.g. `AuthorVariable-Medium`, `EpilogueRoman-Medium`) add
+/// `Variable` or `Roman` to it. Match it against installed families with their spaces removed,
+/// preferring the family without that suffix (the static `Author` / `Epilogue` cuts).
+fn resolve_squashed_family(base: &str, cut: &str) -> Option<Resolved> {
+    let squash = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_ascii_lowercase();
+    let wanted = squash(base);
+    let stripped = ["variable", "roman"].iter().find_map(|s| wanted.strip_suffix(s)).filter(|s| !s.is_empty());
+    let faces = all_faces();
+    let family = |target: &str| faces.iter().map(|f| &f.info.family).find(|fam| squash(fam) == target).cloned();
+    let found = stripped.and_then(family).or_else(|| family(&wanted))?;
+    resolve_in(&found, cut)
 }
 
 fn postscript_style_hint(name: &str) -> Option<(&str, &str)> {
