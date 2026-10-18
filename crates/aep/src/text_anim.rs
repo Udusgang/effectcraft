@@ -38,6 +38,16 @@ pub(crate) fn native_match(parent: &str, ae: &str, authored: Option<bool>) -> Op
         ("properties", "ADBE Text Blur") if authored == Some(true) => "blur",
         ("properties", "ADBE Text Position 3D") if authored == Some(true) => "position",
         ("properties", "ADBE Text Opacity") if authored == Some(true) => "opacity",
+        ("properties", "ADBE Text Track Type") if authored == Some(true) => "trackingType",
+        ("properties", "ADBE Text Tracking Amount") if authored == Some(true) => "tracking",
+        ("properties", "ADBE Text Rotation") if authored == Some(true) => "rotation",
+        ("properties", "ADBE Text Rotation X") if authored == Some(true) => "rotationX",
+        ("properties", "ADBE Text Rotation Y") if authored == Some(true) => "rotationY",
+        // Expression Selector: Based On, and an Amount an expression sets per character
+        // (textIndex, textTotal, selectorValue).
+        ("selectors", "ADBE Text Expressible Selector") => "expressionSelector",
+        ("expressionSelector", "ADBE Text Range Type2") => "basedOn",
+        ("expressionSelector", "ADBE Text Expressible Amount") => "amount",
         _ => return None,
     })
 }
@@ -46,6 +56,8 @@ pub(crate) fn template(parent: &str, id: &str) -> Option<Value> {
     match (parent, id) {
         ("advanced", "units" | "basedOn" | "mode" | "shape") => Some(Value::Enum(0)),
         ("advanced", "randomize") => Some(Value::Bool(false)),
+        // AE's popups count from 1, the native ones from 0 (the importer subtracts one).
+        ("properties", "trackingType") | ("expressionSelector", "basedOn") => Some(Value::Enum(0)),
         _ => None,
     }
 }
@@ -70,13 +82,15 @@ pub(crate) fn fully_supported(ir: &Json) -> bool {
             match id {
                 "ADBE Text Selectors" => {
                     for selector in leaves {
-                        if selector.get("match_name").and_then(Json::as_str) != Some("ADBE Text Selector") {
+                        let supported = match selector.get("match_name").and_then(Json::as_str) {
+                            Some("ADBE Text Selector") => selector_supported(selector, "selectors"),
+                            Some("ADBE Text Expressible Selector") => expressible_supported(selector),
+                            _ => false,
+                        };
+                        if !supported {
                             return false;
                         }
                         has_selector = true;
-                        if !selector_supported(selector, "selectors") {
-                            return false;
-                        }
                     }
                 }
                 "ADBE Text Animator Properties" => {
@@ -119,6 +133,17 @@ fn selector_supported(group: &Json, parent: &str) -> bool {
         let Some(ae) = child.get("match_name").and_then(Json::as_str) else { return false };
         let mapped_parent = if parent == "rangeSelector" { "advanced" } else { "rangeSelector" };
         native_match(mapped_parent, ae, Some(true)).is_some() && !has_expression(child)
+    })
+}
+
+/// An Expression Selector whose live controls all map (its Amount carries the expression the
+/// native selector evaluates per character).
+fn expressible_supported(group: &Json) -> bool {
+    let Some(children) = group.get("children").and_then(Json::as_array) else { return false };
+    children.iter().all(|child| match child.get("authored").and_then(Json::as_bool) {
+        None => false,
+        Some(false) => true,
+        Some(true) => child.get("match_name").and_then(Json::as_str).is_some_and(|ae| native_match("expressionSelector", ae, Some(true)).is_some()),
     })
 }
 

@@ -7,7 +7,7 @@ use effectcraft_time::Tick;
 use serde_json::{Value, json};
 
 use super::app_more::grouped;
-use super::{CommandSpec, b_p, bad, comp_id, f_p, has_comp, layer_mut, layer_p, layers_p, resolve_layer, str_p};
+use super::{CommandSpec, always, b_p, bad, comp_id, f_p, has_comp, layer_mut, layer_p, layers_p, resolve_layer, str_p};
 use crate::{EngineError, Result, Session, cmd};
 
 // ---------------------------------------------------------------- comp.reframe
@@ -469,6 +469,86 @@ fn cut_to_beats(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"placed": placed, "short": short, "unplaced": unplaced, "beats": beats.len()}))
 }
 
+// ---------------------------------------------------------------- text.substituteFonts
+
+/// Whether `font` matches `pattern`: the same name in any case, or a prefix ending in `*`.
+fn font_matches(pattern: &str, font: &str) -> bool {
+    match pattern.strip_suffix('*') {
+        Some(prefix) => font.to_ascii_lowercase().starts_with(&prefix.to_ascii_lowercase()),
+        None => font.eq_ignore_ascii_case(pattern),
+    }
+}
+
+/// `text.substituteFonts`: draw text set in fonts this machine doesn't have with stand-ins,
+/// across the whole project, keeping the original font names (After Effects' missing-font
+/// substitution): installing the real font and clearing the stand-in brings it back. `map`
+/// pairs a font (PostScript or family name, or a prefix ending in `*`) with its stand-in, or
+/// with `null` to clear. Installed fonts are left alone unless `all`. One undo step.
+fn substitute_fonts(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "text.substituteFonts";
+    let map: Vec<(String, Option<String>)> = p
+        .get("map")
+        .and_then(Value::as_object)
+        .ok_or_else(|| bad(C, "`map`: {font name or prefix*: stand-in font, or null to clear}"))?
+        .iter()
+        .map(|(k, v)| (k.clone(), v.as_str().filter(|t| !t.is_empty()).map(str::to_string)))
+        .collect();
+    if map.is_empty() {
+        return Err(bad(C, "`map` is empty"));
+    }
+    // A stand-in that isn't installed would fall back again.
+    if let Some(t) = map.iter().filter_map(|(_, to)| to.as_deref()).find(|t| crate::text::fonts::resolve(t, "").missing) {
+        return Err(bad(C, format!("stand-in font `{t}` is not installed (text.fonts lists the installed ones)")));
+    }
+    let all = b_p(p, "all").unwrap_or(false);
+    // The stand-in for one style run: Some(new render font) when it changes.
+    let pick = |font: &str, style: &str, current: &Option<String>| -> Option<Option<String>> {
+        let to = map.iter().find(|(pat, _)| font_matches(pat, font)).map(|(_, to)| to.clone())?;
+        if to.is_some() && !all && !crate::text::fonts::resolve(font, style).missing {
+            return None;
+        }
+        (to != *current).then_some(to)
+    };
+    let (runs, layers) = s.edit("Substitute Fonts", None, |proj, _| {
+        let (mut runs, mut layers) = (0usize, 0usize);
+        let ids: Vec<ItemId> = proj.comps().map(|(id, _)| *id).collect();
+        for cid in ids {
+            let Some(c) = proj.comp_mut(cid) else { continue };
+            for l in &mut c.layers {
+                let Some(pr) = l.props.prop_mut("text/sourceText") else { continue };
+                let mut changed = 0usize;
+                let mut fix = |doc: &mut effectcraft_keyframe::TextDoc| {
+                    if let Some(to) = pick(&doc.font, &doc.style, &doc.render_font) {
+                        doc.render_font = to;
+                        changed += 1;
+                    }
+                    for run in &mut doc.runs {
+                        let st = &mut run.style;
+                        if let Some(to) = pick(&st.font, &st.style, &st.render_font) {
+                            st.render_font = to;
+                            changed += 1;
+                        }
+                    }
+                };
+                if let effectcraft_keyframe::Value::Text(doc) = &mut pr.value {
+                    fix(doc);
+                }
+                for k in &mut pr.keys {
+                    if let effectcraft_keyframe::Value::Text(doc) = &mut k.value {
+                        fix(doc);
+                    }
+                }
+                if changed > 0 {
+                    runs += changed;
+                    layers += 1;
+                }
+            }
+        }
+        Ok((runs, layers))
+    })?;
+    Ok(json!({"runs": runs, "layers": layers}))
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(
@@ -497,6 +577,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{layers (the clips, in order), music (layer with beat markers from audio.detectBeats), every? (beats per clip, 1), start? (first beat index, 0), comment? (\"beat\"), comp?} → {placed: [{layer, in, out}], short (clips that ran out early), unplaced (no beats left)}",
             has_comp,
             cut_to_beats
+        ),
+        cmd!(
+            "text.substituteFonts",
+            "Substitute Fonts",
+            [],
+            None,
+            "{map: {font (PostScript or family name, or prefix*): stand-in font, or null to clear}, all?: bool (also substitute installed fonts)} → {runs, layers}; the original font names stay (file.findMissing {what: fonts} shows them as substituted)",
+            always,
+            substitute_fonts
         ),
     ]
 }
@@ -648,6 +737,35 @@ mod tests {
         assert!(s.execute("layer.cutToBeats", json!({"layers": [la, lb, lc], "music": music, "every": 2, "start": 8})).is_err());
         assert!(s.execute("layer.cutToBeats", json!({"layers": [la], "music": 999})).is_err());
         assert!(s.execute("layer.cutToBeats", json!({"layers": [music], "music": music})).is_err());
+    }
+
+    #[test]
+    fn missing_fonts_get_stand_ins_that_keep_the_original_name() {
+        let mut s = Session::default();
+        s.execute("comp.new", json!({"name": "Main", "width": 200, "height": 100, "frameRate": 30, "duration": 2})).unwrap();
+        let a = s.execute("layer.newText", json!({"text": "Title"})).unwrap()["layer"].as_u64().unwrap();
+        s.execute("layer.setText", json!({"layer": a, "font": "TrajanPro3-Light"})).unwrap();
+        let b = s.execute("layer.newText", json!({"text": "Kept"})).unwrap()["layer"].as_u64().unwrap();
+        s.execute("layer.setText", json!({"layer": b, "font": "Inter", "style": "Bold"})).unwrap();
+        let doc = |s: &Session, id: u64| {
+            let l = s.active_comp().unwrap().layers.iter().find(|l| l.id.0 == id).unwrap().clone();
+            l.props.prop("text/sourceText").unwrap().value.as_text().unwrap().clone()
+        };
+        let r = s.execute("text.substituteFonts", json!({"map": {"TrajanPro3-*": "Inter", "Inter": "JetBrains Mono"}})).unwrap();
+        assert_eq!(r["layers"], 1, "the installed Inter is left alone");
+        assert!(r["runs"].as_u64().unwrap() >= 1);
+        let d = doc(&s, a);
+        assert_eq!((d.font.as_str(), d.render_font.as_deref()), ("TrajanPro3-Light", Some("Inter")));
+        assert_eq!(doc(&s, b).render_font, None);
+        // `all` substitutes installed fonts too; null clears; one undo step each.
+        s.execute("text.substituteFonts", json!({"map": {"Inter": "JetBrains Mono"}, "all": true})).unwrap();
+        assert_eq!(doc(&s, b).render_font.as_deref(), Some("JetBrains Mono"));
+        s.execute("edit.undo", json!({})).unwrap();
+        assert_eq!(doc(&s, b).render_font, None);
+        s.execute("text.substituteFonts", json!({"map": {"TrajanPro3-Light": null}})).unwrap();
+        assert_eq!(doc(&s, a).render_font, None);
+        assert!(s.execute("text.substituteFonts", json!({"map": {"TrajanPro3-*": "NoSuchFont-Regular"}})).is_err(), "stand-ins must be installed");
+        assert!(s.execute("text.substituteFonts", json!({"map": {}})).is_err());
     }
 
     #[test]

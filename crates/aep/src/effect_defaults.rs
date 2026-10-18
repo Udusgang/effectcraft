@@ -85,6 +85,9 @@ pub(crate) fn inert(effect_id: &str, raw: &str, child: &Json, effect: &Json) -> 
         // Radial Blur's hidden Random Seed at its default 0 changes nothing the native blur draws.
         "ec.blur.radial" => raw == "ADBE Radial Blur-0006" && static_value(child) && same(&child["value"], &json!(0)),
         "ec.vr.chromaticaberrations" => vr_chromatic_default(raw, child),
+        // Turbulent Displace's Antialiasing for Best Quality at its default (Low): the native
+        // effect has no such control and draws the same.
+        "ec.distort.turbulentdisplace" => raw == "ADBE Turbulent Displace-0014" && static_value(child) && same(&child["value"], &json!(1)),
         _ => false,
     }
 }

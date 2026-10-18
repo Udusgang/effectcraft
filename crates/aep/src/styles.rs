@@ -95,16 +95,18 @@ fn param_id(style: &str, raw: &str) -> Option<&'static str> {
     })
 }
 
-// AE's style Blend Mode popup has gaps between families; native indices are contiguous.
+// AE's style Blend Mode popup counts the separators between Photoshop's families (after
+// Dissolve, Darker Color, Lighter Color, Hard Mix and Divide); the native list
+// (`STYLE_BLEND_MODES`, Photoshop's order) doesn't. Measured: 1 Normal, 5 Multiply, 11 Screen,
+// 12 Color Dodge, 16 Overlay, 17 Soft Light, 18 Hard Light.
 fn mode_index(raw: u32) -> Option<u32> {
     Some(match raw {
-        1 => 0,
-        5 => 3,
-        11 => 8,
-        12 => 9,
-        16 => 12,
-        17 => 13,
-        18 => 14,
+        1..=2 => raw - 1,
+        4..=8 => raw - 2,
+        10..=14 => raw - 3,
+        16..=22 => raw - 4,
+        24..=27 => raw - 5,
+        29..=32 => raw - 6,
         _ => return None,
     })
 }
@@ -234,6 +236,23 @@ pub(super) fn import(project: &mut Project, layer: &mut Layer, ir: &Json, losses
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn style_blend_modes_skip_the_menu_separators() {
+        for (ae, native) in [(1, 0), (5, 3), (11, 8), (12, 9), (16, 12), (17, 13), (18, 14)] {
+            assert_eq!(mode_index(ae), Some(native), "measured {ae}");
+        }
+        let name = |ae: u32| mode_index(ae).and_then(|i| effectcraft_project::styles::STYLE_BLEND_MODES.get(i as usize)).map(|m| m.0);
+        assert_eq!(name(2), Some("Dissolve"));
+        assert_eq!(name(4), Some("Darken"));
+        assert_eq!(name(19), Some("Vivid Light"));
+        assert_eq!(name(24), Some("Difference"));
+        assert_eq!(name(27), Some("Divide"));
+        assert_eq!(name(32), Some("Luminosity"));
+        for separator in [3, 9, 15, 23, 28, 33, 0] {
+            assert_eq!(mode_index(separator), None, "{separator}");
+        }
+    }
     use effectcraft_project::{Comp, LayerSource};
 
     #[test]

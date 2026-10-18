@@ -9,6 +9,7 @@ pub(crate) fn effect_id(ae_match: &str) -> Option<&'static str> {
         "ADBE Angle Control" => "ec.control.angle",
         "ADBE BEZMESH" => "ec.distort.bezierwarp",
         "ADBE Basic 3D" => "ec.obsolete.basic3d",
+        "ADBE Bevel Alpha" => "ec.perspective.bevelalpha",
         "ADBE Black&White" => "ec.color.blackwhite",
         "ADBE Box Blur2" => "ec.blur.fastbox",
         "ADBE Brightness & Contrast 2" => "ec.color.brightnesscontrast",
@@ -25,6 +26,7 @@ pub(crate) fn effect_id(ae_match: &str) -> Option<&'static str> {
         "ADBE Color Key" => "ec.key.colorkey",
         "ADBE Color Range" => "ec.key.colorrange",
         "ADBE Compound Blur" => "ec.blur.compound",
+        "ADBE Corner Pin" => "ec.distort.cornerpin",
         "ADBE CurvesCustom" => "ec.color.curves",
         "ADBE Displacement Map" => "ec.distort.displacementmap",
         "ADBE Drop Shadow" => "ec.perspective.dropshadow",
@@ -44,6 +46,7 @@ pub(crate) fn effect_id(ae_match: &str) -> Option<&'static str> {
         "ADBE Grid" => "ec.generate.grid",
         "ADBE HUE SATURATION" => "ec.color.huesaturation",
         "ADBE Invert" => "ec.channel.invert",
+        "ADBE Layer Control" => "ec.control.layer",
         "ADBE Linear Color Key2" => "ec.key.linearcolor",
         "ADBE Linear Wipe" => "ec.transition.linearwipe",
         "ADBE Lumetri" => "ec.color.lumetri",
@@ -271,6 +274,7 @@ pub(crate) fn param_id(effect_id: &str, ae_param_match: &str) -> Option<&'static
         ("ec.perspective.dropshadow", "ADBE Drop Shadow-0004") => "distance",
         ("ec.perspective.dropshadow", "ADBE Drop Shadow-0005") => "softness",
         ("ec.perspective.dropshadow", "ADBE Drop Shadow-0006") => "shadowOnly",
+        ("ec.color.levels", "ADBE Easy Levels2-0001") => "channel",
         ("ec.color.levels", "ADBE Easy Levels2-0003") => "inBlack",
         ("ec.color.levels", "ADBE Easy Levels2-0004") => "inWhite",
         ("ec.color.levels", "ADBE Easy Levels2-0005") => "gamma",
@@ -957,6 +961,15 @@ pub(crate) fn param_id(effect_id: &str, ae_param_match: &str) -> Option<&'static
         ("ec.stylize.ccrepetile", "CC RepeTile-0003") => "expandDown",
         ("ec.stylize.ccrepetile", "CC RepeTile-0004") => "expandUp",
         ("ec.stylize.ccrepetile", "CC RepeTile-0005") => "tiling",
+        ("ec.perspective.bevelalpha", "ADBE Bevel Alpha-0001") => "edgeThickness",
+        ("ec.perspective.bevelalpha", "ADBE Bevel Alpha-0002") => "lightAngle",
+        ("ec.perspective.bevelalpha", "ADBE Bevel Alpha-0003") => "lightColor",
+        ("ec.perspective.bevelalpha", "ADBE Bevel Alpha-0004") => "lightIntensity",
+        ("ec.distort.cornerpin", "ADBE Corner Pin-0001") => "ul",
+        ("ec.distort.cornerpin", "ADBE Corner Pin-0002") => "ur",
+        ("ec.distort.cornerpin", "ADBE Corner Pin-0003") => "ll",
+        ("ec.distort.cornerpin", "ADBE Corner Pin-0004") => "lr",
+        ("ec.control.layer", "ADBE Layer Control-0001") => "layer",
         ("ec.sim.ccrainfall", "CSRainfall-0001") => "drops",
         ("ec.sim.ccrainfall", "CSRainfall-0002") => "size",
         ("ec.sim.ccrainfall", "CSRainfall-0003") => "sceneDepth",
@@ -1167,6 +1180,12 @@ mod tests {
         assert_eq!(param_id("ec.distort.opticscompensation", "ADBE Optics Compensation-0006"), Some("resize"));
         assert_eq!(param_id("ec.stylize.ccrepetile", "CC RepeTile-0001"), Some("expandRight"));
         assert_eq!(param_id("ec.stylize.ccrepetile", "CC RepeTile-0005"), Some("tiling"));
+        assert_eq!(effect_id("ADBE Bevel Alpha"), Some("ec.perspective.bevelalpha"));
+        assert_eq!(effect_id("ADBE Corner Pin"), Some("ec.distort.cornerpin"));
+        assert_eq!(effect_id("ADBE Layer Control"), Some("ec.control.layer"));
+        assert_eq!(param_id("ec.perspective.bevelalpha", "ADBE Bevel Alpha-0004"), Some("lightIntensity"));
+        assert_eq!(param_id("ec.distort.cornerpin", "ADBE Corner Pin-0003"), Some("ll"));
+        assert_eq!(param_id("ec.control.layer", "ADBE Layer Control-0001"), Some("layer"));
         // Blend Borders has no native control; effect_defaults decides whether it matters.
         assert_eq!(param_id("ec.stylize.ccrepetile", "CC RepeTile-0006"), None);
     }

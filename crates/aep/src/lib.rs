@@ -401,6 +401,14 @@ fn import_doc(next: &mut Project, bytes: &[u8], source_dir: &str, resolve_media:
                         // an accidental beta rename (community.adobe.com/questions-534/match-names-for-renderers-changing-314356).
                         "adbe advanced 3d" | "adbe classic 3d" => effectcraft_project::Renderer::Classic3D,
                         "adbe calder" => effectcraft_project::Renderer::Advanced3D,
+                        // Cinema 4D (Ernst): extruded and bevelled text and shapes lit in 3D, which
+                        // Advanced 3D draws from the same Geometry Options; its shading differs.
+                        "adbe ernst" => {
+                            result
+                                .warnings
+                                .push(format!("comp {ae_id}: Cinema 4D renderer drawn with Advanced 3D (extrusion and bevels kept; shading may differ)"));
+                            effectcraft_project::Renderer::Advanced3D
+                        }
                         _ => {
                             result.losses.push(format!("comp {ae_id}: unsupported renderer {renderer}"));
                             effectcraft_project::Renderer::Classic3D
@@ -659,6 +667,13 @@ fn import_doc(next: &mut Project, bytes: &[u8], source_dir: &str, resolve_media:
                 let model_scale = integer(ir, &["source_id"]).and_then(|id| model_scales.get(&id).copied().flatten());
                 models3d::import(next, &mut layer, ir, model_scale, &mut result.losses, &format!("comp {ae_id} layer {ae_layer}"));
                 result.losses.push(format!("comp {ae_id} layer {ae_layer}: 3D model coordinate/render parity with AE is unverified"));
+            }
+            // Animation ▸ Animate Text ▸ Enable Per-character 3D: the characters (and their
+            // animators' X/Y rotation and Z position) move in 3D.
+            if ir.get("switches").and_then(|sw| boolean(sw, &["three_d_per_char"])) == Some(true)
+                && let Some(pc3) = layer.props.prop_mut("text/perChar3d")
+            {
+                pc3.value = Value::Bool(true);
             }
             local_ids.insert(ae_layer, layer.id);
             result.layer_ids.insert((ae_id, ae_layer), layer.id);
@@ -1406,6 +1421,7 @@ fn import_property(
                 | "lightOptions"
                 | "geometryOptions"
                 | "rangeSelector"
+                | "expressionSelector"
                 | "advanced"
                 | "properties"
         );
