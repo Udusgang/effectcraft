@@ -819,6 +819,42 @@ fn nested_precomps_render_resident() {
     }
 }
 
+/// Three precomp layers of one nested comp at the same time share one resident nested render
+/// (`Enc::recall_precomp`): each gets its own copy, so the effects on one (a blur on the
+/// "background" instance, levels on another) don't reach the others; the frame matches the CPU.
+#[test]
+fn instances_of_one_nested_comp_at_one_time_share_a_render() {
+    for depth in [BitDepth::Bpc8, BitDepth::Bpc32] {
+        let mut s = Scene::new(depth);
+        let inner = Comp::new(60, 40, FrameRate::FPS_30, Tick::from_seconds_f64(2.0));
+        let inner_id = s.p.add_item("Inner", Label::Sandstone, None, ItemKind::Comp(inner.clone().into()));
+        {
+            let mut ins = Scene { p: std::mem::take(&mut s.p), cid: inner_id, comp: inner };
+            let a = ins.footage(50, 30);
+            ins.push(a);
+            let mut b = ins.solid([0.9, 0.3, 0.2], 20, 20);
+            set(&mut b, "transform/rotation", Value::Scalar(30.0));
+            ins.push(b);
+            s.p = ins.p;
+        }
+        // The blurred, enlarged background instance first (drawn first: it renders the comp).
+        let mut back = build::layer(&mut s.p, &s.comp, "Back", LayerSource::Comp { item: inner_id }, (60, 40), None);
+        set(&mut back, "transform/scale", Value::Vec3([180.0, 180.0, 100.0]));
+        s.effect(&mut back, "ec.blur.gaussian", &[("blurriness", n(6.0))]);
+        s.push(back);
+        let mut front = build::layer(&mut s.p, &s.comp, "Front", LayerSource::Comp { item: inner_id }, (60, 40), None);
+        set(&mut front, "transform/scale", Value::Vec3([70.0, 70.0, 100.0]));
+        s.push(front);
+        let mut third = build::layer(&mut s.p, &s.comp, "Third", LayerSource::Comp { item: inner_id }, (60, 40), None);
+        set(&mut third, "transform/position", v3(20.0, 15.0));
+        s.effect(&mut third, "ec.color.levels", &[("gamma", n(1.6))]);
+        s.push(third);
+        check(&format!("shared nested render {depth:?}"), compare_at(&s, opts(), Tick::from_seconds_f64(0.4)), 0.0);
+        let half = RenderOpts { scale: 0.5, ..opts() };
+        check(&format!("shared nested render half {depth:?}"), compare_at(&s, half, Tick::from_seconds_f64(0.4)), 0.0);
+    }
+}
+
 /// #613: an effect kernel the device's shader compiler rejects (FXC on DirectX 12 aborting on
 /// `pointwise`) no longer turns the whole GPU compositor off: the context is built without it,
 /// lists it, and the effects that need it render on the CPU, matching the CPU render.

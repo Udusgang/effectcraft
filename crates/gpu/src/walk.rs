@@ -302,11 +302,21 @@ fn draw_precomp(e: &mut Enc, r: &Renderer, ctx: &EvalCtx, layer: &Layer, canvas:
         return None;
     }
     let (sub, item, lt, bs) = r.precomp_source(ctx, layer)?;
-    // A nested comp the GPU can't take (nested too deep, over the texture limit, content it
-    // declines) goes back to the CPU path for this layer only; only a device failure fails the
-    // frame.
-    let Some(mut src) = render(e, &sub, item, lt) else {
-        return if e.g.check_health().is_ok() { None } else { Some(None) };
+    // Another layer of this frame may already have drawn the same nested frame (a sharp copy
+    // over a blurred one).
+    let key = sub.nested_key(item, lt, bs);
+    let mut src = match e.recall_precomp(&key) {
+        Some(img) => img,
+        None => {
+            // A nested comp the GPU can't take (nested too deep, over the texture limit,
+            // content it declines) goes back to the CPU path for this layer only; only a device
+            // failure fails the frame.
+            let Some(img) = render(e, &sub, item, lt) else {
+                return if e.g.check_health().is_ok() { None } else { Some(None) };
+            };
+            e.remember_precomp(key, &img);
+            img
+        }
     };
     let pipe = r.pipe();
     // `masked_source` quantises a non-solid source to the project's depth.

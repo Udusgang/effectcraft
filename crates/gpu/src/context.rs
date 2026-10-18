@@ -997,7 +997,13 @@ pub(crate) struct Enc<'g> {
     missing: bool,
     /// This `Enc`'s id in the texture pool (textures it may reuse at once).
     owner: u64,
+    /// Nested comp frames this render already drew, for other precomp layers of the same comp
+    /// at the same time ([`Enc::recall_precomp`]); the GPU side of `effectcraft_render::NestedMemo`.
+    precomps: Vec<(effectcraft_render::NestedKey, GpuImage)>,
 }
+
+/// Nested comp frames an `Enc` keeps: each is a full frame of GPU memory.
+const PRECOMP_MEMO_MAX: usize = 8;
 
 impl Drop for Enc<'_> {
     fn drop(&mut self) {
@@ -1014,7 +1020,30 @@ impl Drop for Enc<'_> {
 impl<'g> Enc<'g> {
     pub fn new(g: &'g GpuContext) -> Enc<'g> {
         let owner = g.pool.lock().map(|mut p| p.register()).unwrap_or(0);
-        Enc { g, enc: None, pending: 0, missing: false, owner }
+        Enc { g, enc: None, pending: 0, missing: false, owner, precomps: Vec::new() }
+    }
+
+    /// A copy of `img` in a new pooled image, with its quantisation state.
+    pub(crate) fn duplicate(&mut self, img: &GpuImage) -> GpuImage {
+        let mut out = self.image(img.width, img.height);
+        self.copy_into(img, &out, 0, 0);
+        out.levels = img.levels;
+        out
+    }
+
+    /// The nested comp frame another layer of this render already drew with the same key, as
+    /// a copy the caller may change ([`Enc::remember_precomp`]).
+    pub(crate) fn recall_precomp(&mut self, key: &effectcraft_render::NestedKey) -> Option<GpuImage> {
+        let img = self.precomps.iter().find(|(k, _)| k == key).map(|(_, img)| img.clone())?;
+        Some(self.duplicate(&img))
+    }
+
+    /// Keep a copy of a nested comp frame for the rest of this render.
+    pub(crate) fn remember_precomp(&mut self, key: effectcraft_render::NestedKey, img: &GpuImage) {
+        if self.precomps.len() < PRECOMP_MEMO_MAX && !self.precomps.iter().any(|(k, _)| *k == key) {
+            let copy = self.duplicate(img);
+            self.precomps.push((key, copy));
+        }
     }
 
     /// Whether a dispatch since the last call named a kernel the device doesn't have (one

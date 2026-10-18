@@ -88,3 +88,35 @@ fn a_nested_comp_shows_nothing_past_its_end() {
         assert!(render_frame(&p, cid, s(2.0), 1.0).get(50, 50)[3] < 0.01, "collapse {collapse}: past its end");
     }
 }
+
+/// Two layers showing the same nested comp at the same time (a sharp copy over a scaled,
+/// darker one) share one nested render within the frame; the result is exactly what two
+/// separate, identical comps give, including when the second copy is time-shifted.
+#[test]
+fn two_layers_of_one_nested_comp_render_the_same_as_two_separate_comps() {
+    let build_two = |shared: bool, shift: f64| {
+        let (mut p, cid, iid) = nested(false, false);
+        let second = if shared {
+            iid
+        } else {
+            let copy = p.comp(iid).unwrap().clone();
+            p.add_item("Inner copy", Label::Sandstone, None, ItemKind::Comp(copy.into()))
+        };
+        let outer = p.comp(cid).unwrap().clone();
+        let mut l = build::layer(&mut p, &outer, "Second", LayerSource::Comp { item: second }, (100, 100), None);
+        l.props.prop_mut("transform/scale").unwrap().value = Value::Vec3([50.0, 50.0, 100.0]);
+        l.props.prop_mut("transform/opacity").unwrap().value = Value::Scalar(60.0);
+        l.start_time = s(shift);
+        l.in_point = s(shift);
+        p.comp_mut(cid).unwrap().layers.push(l);
+        (p, cid)
+    };
+    for shift in [0.0, 0.5] {
+        let (shared, cid) = build_two(true, shift);
+        let (separate, cid2) = build_two(false, shift);
+        for t in [0.6, 1.0, 1.7] {
+            assert_eq!(render_frame(&shared, cid, s(t), 1.0).data, render_frame(&separate, cid2, s(t), 1.0).data, "shift {shift}, t {t}");
+            assert_eq!(render_frame(&shared, cid, s(t), 0.5).data, render_frame(&separate, cid2, s(t), 0.5).data, "half res, shift {shift}, t {t}");
+        }
+    }
+}

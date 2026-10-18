@@ -618,6 +618,45 @@ pub struct Renderer<'a> {
     through: [Option<Through<'a>>; MAX_THROUGH],
     /// More collapsed levels than [`MAX_THROUGH`]: their motion is not blurred.
     through_lost: bool,
+    /// Nested comp frames already drawn during the current top-level frame (see
+    /// [`NestedMemo`]); set by [`Renderer::comp_frame`] for the frame's duration.
+    nested_memo: Option<&'a NestedMemo>,
+}
+
+/// Nested comp frames drawn during one top-level frame, keyed by everything their pixels depend
+/// on there (comp, nested time, buffer scale, the Quality and Motion Blur switches passed down).
+/// Two precomp layers showing the same comp at the same time — a sharp copy over a blurred,
+/// filled one, the usual way to put a 16:9 edit in a 9:16 frame — draw it once. It lives only
+/// as long as the frame, while the project can't change, so it never needs invalidating.
+#[derive(Default)]
+pub struct NestedMemo(std::sync::Mutex<Vec<(NestedKey, Arc<Image>)>>);
+
+/// What a nested comp frame drawn by a nested renderer depends on within one top-level frame
+/// ([`Renderer::nested_key`]); the GPU compositor keys its own per-frame memo with it too.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NestedKey {
+    comp: ItemId,
+    time: Tick,
+    scale: u64,
+    inherited: Option<(u8, bool)>,
+}
+
+/// Frames a memo keeps: a frame rarely shows more distinct precomp instances; past this, the
+/// rest are drawn without memo rather than holding more full frames in memory.
+const NESTED_MEMO_MAX: usize = 32;
+
+impl NestedMemo {
+    fn get(&self, key: &NestedKey) -> Option<Arc<Image>> {
+        let entries = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        entries.iter().find(|(k, _)| k == key).map(|(_, img)| img.clone())
+    }
+
+    fn put(&self, key: NestedKey, img: Arc<Image>) {
+        let mut entries = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if entries.len() < NESTED_MEMO_MAX && !entries.iter().any(|(k, _)| *k == key) {
+            entries.push((key, img));
+        }
+    }
 }
 
 /// One collapsed precomp layer a nested comp is drawn through.
@@ -704,7 +743,19 @@ impl<'a> Renderer<'a> {
             top: true,
             through: [None; MAX_THROUGH],
             through_lost: false,
+            nested_memo: None,
         }
+    }
+
+    /// The key of nested comp `comp` at its time `time` and buffer scale `scale` as drawn by this
+    /// (nested) renderer: comp, time, scale and the switches it inherits.
+    pub fn nested_key(&self, comp: ItemId, time: Tick, scale: f64) -> NestedKey {
+        let rank = |q: Quality| match q {
+            Quality::Best => 0u8,
+            Quality::Draft => 1,
+            Quality::Wireframe => 2,
+        };
+        NestedKey { comp, time, scale: scale.to_bits(), inherited: self.inherited.map(|(q, mb)| (rank(q), mb)) }
     }
 
     /// The layer cache to keep this render's buffers in: none once its footage reads were
@@ -947,6 +998,11 @@ impl<'a> Renderer<'a> {
     /// Render a composition at comp time `t` (transparent background, comp size × scale).
     /// Top-level frames go to the GPU when [`Self::active_accel`] is set and handles them.
     pub fn comp_frame(&self, comp_id: ItemId, t: Tick) -> Image {
+        // A top-level frame shares nested comp frames between the layers that show them.
+        if self.depth == 0 && self.nested_memo.is_none() {
+            let memo = NestedMemo::default();
+            return Renderer { nested_memo: Some(&memo), ..*self }.comp_frame(comp_id, t);
+        }
         // Classic 3D runs composite on the GPU too (M12.7), so Auto sends 3D comps there as well;
         // Auto renders each comp on whichever compositor measured faster ([`AutoPick`]).
         if self.depth == 0
@@ -1302,7 +1358,17 @@ impl<'a> Renderer<'a> {
                         return Some(Buf { img: blend_frames(mode, &a, &b, w as f32), offset: [0.0; 2], scale: bs });
                     }
                 }
-                Some(Buf { img: sub.comp_frame(*item, lt), offset: [0.0; 2], scale: bs })
+                // Another layer of this frame may already have drawn the same nested frame.
+                let key = sub.nested_key(*item, lt, bs);
+                let memo = self.nested_memo.filter(|_| tmp.is_none());
+                if let Some(img) = memo.and_then(|m| m.get(&key)) {
+                    return Some(Buf { img: (*img).clone(), offset: [0.0; 2], scale: bs });
+                }
+                let img = sub.comp_frame(*item, lt);
+                if let Some(m) = memo {
+                    m.put(key, Arc::new(img.clone()));
+                }
+                Some(Buf { img, offset: [0.0; 2], scale: bs })
             }
             LayerSource::Footage { item } => {
                 let it = self.project.item(*item)?;
