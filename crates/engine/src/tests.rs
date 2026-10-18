@@ -68,6 +68,24 @@ fn add_item_at_a_stack_index_and_time() {
     assert!(s.execute("layer.addItem", json!({"item": clip, "index": 0})).is_err(), "1-based");
 }
 
+/// By name, `layer.addItem` takes the comp even when a folder of the same name comes first (an
+/// imported After Effects template keeps `Intro 01` inside a folder `Intro 01`).
+#[test]
+fn add_item_by_name_skips_a_folder_of_the_same_name() {
+    let mut s = Session::default();
+    let folder = s.execute("project.newFolder", json!({"name": "Folder"})).unwrap()["item"].as_u64().unwrap();
+    let intro = s.execute("comp.new", json!({"name": "Intro", "width": 16, "height": 16, "frameRate": 30, "duration": 1})).unwrap()["comp"].as_u64().unwrap();
+    s.execute("comp.new", json!({"name": "Main", "width": 32, "height": 32, "frameRate": 30, "duration": 4})).unwrap();
+    // New items get unique names, but an imported project keeps its own: give the folder (the
+    // first item) the comp's name directly.
+    std::sync::Arc::make_mut(&mut s.project).items.get_mut(&effectcraft_project::ItemId(folder)).unwrap().name = "Intro".into();
+    s.execute("layer.addItem", json!({"item": "Intro"})).unwrap();
+    let l = &s.active_comp().unwrap().layers[0];
+    assert!(matches!(l.source, effectcraft_project::LayerSource::Comp { item } if item.0 == intro));
+    s.execute("project.newFolder", json!({"name": "Only A Folder"})).unwrap();
+    assert!(s.execute("layer.addItem", json!({"item": "Only A Folder"})).is_err());
+}
+
 /// Files dropped on the Timeline or the Composition viewer (`file.import {addToComp}`) become
 /// layers of the comp that was active, one under the other, where they were dropped (#85, #89).
 #[test]

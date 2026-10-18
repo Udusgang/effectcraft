@@ -73,6 +73,28 @@ fn transition_preset_by_name_and_bad_input() {
     assert!(s.execute("anim.applyBuiltinPreset", json!({"layers": [cam], "preset": "clockReveal"})).is_err());
 }
 
+#[test]
+fn transition_presets_align_to_the_layer_in_and_out_points() {
+    let (mut s, solid) = session();
+    s.execute("layer.timing", json!({"layers": [solid], "in": 1.0, "out": 4.0})).unwrap();
+    let opacity_keys = |s: &Session| -> Vec<f64> {
+        s.active_comp().unwrap().layers[0].props.prop("transform/opacity").unwrap().keys.iter().map(|k| k.time.seconds()).collect()
+    };
+    // The playhead is elsewhere (0 s); `out` puts the fade on the layer's last half second.
+    s.execute("anim.applyBuiltinPreset", json!({"layers": [solid], "preset": "fadeOut", "align": "out"})).unwrap();
+    assert_eq!(opacity_keys(&s), [3.5, 4.0]);
+    s.execute("edit.undo", json!({})).unwrap();
+    // `auto` reads the preset's direction: a fade in starts on the In point.
+    s.execute("anim.applyBuiltinPreset", json!({"layers": [solid], "preset": "fadeIn", "align": "auto"})).unwrap();
+    assert_eq!(opacity_keys(&s), [1.0, 1.5]);
+    s.execute("edit.undo", json!({})).unwrap();
+    // The default is still the current time, as in After Effects.
+    s.execute("time.set", json!({"time": 2.0})).unwrap();
+    s.execute("anim.applyBuiltinPreset", json!({"layers": [solid], "preset": "fadeIn"})).unwrap();
+    assert_eq!(opacity_keys(&s), [2.0, 2.5]);
+    assert!(s.execute("anim.applyBuiltinPreset", json!({"layers": [solid], "preset": "fadeIn", "align": "middle"})).is_err());
+}
+
 /// Every preset's id and name are unique across the whole library (ids key the panel's
 /// automation ids), each sits in a known category, and Text ids don't clash with them.
 #[test]

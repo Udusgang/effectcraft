@@ -120,12 +120,48 @@ fn apply_maps(root: &mut effectcraft_project::PropGroup, spec: &Value, at: Tick,
     skipped
 }
 
+/// The latest key time (seconds from the preset's start) in any of its `keys` lists: how long the
+/// preset animates.
+fn key_span(preset: &Value) -> f64 {
+    preset
+        .get("effects")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .chain(preset.get("layer"))
+        .filter_map(|block| block.get("keys").and_then(Value::as_object))
+        .flat_map(|keys| keys.values())
+        .filter_map(Value::as_array)
+        .flatten()
+        .filter_map(|k| k.get(0).and_then(Value::as_f64))
+        .filter(|t| t.is_finite() && t.abs() <= 86_400.0)
+        .fold(0.0, f64::max)
+}
+
+/// Where a preset's keys start on each layer: the current time (After Effects' behaviour, the
+/// default), the layer's In point, or so they end on its Out point. `auto` picks In for the
+/// presets that bring a layer in and Out for those that take it out.
+#[derive(Clone, Copy, PartialEq)]
+enum Align {
+    Current,
+    In,
+    Out,
+}
+
 /// `anim.applyBuiltinPreset`: add a built-in preset's effects and keyframes to the layers.
 fn apply(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "anim.applyBuiltinPreset";
     let want = str_p(p, "preset").ok_or_else(|| bad(C, "`preset` id or name required"))?;
     let preset = find_preset(want).ok_or_else(|| bad(C, format!("no animation preset `{want}`")))?;
     let name = text(&preset, "name").unwrap_or("Preset").to_string();
+    let align = match (str_p(p, "align").unwrap_or("current"), text(&preset, "direction")) {
+        ("current", _) => Align::Current,
+        ("in", _) | ("auto", Some("in")) => Align::In,
+        ("out", _) | ("auto", Some("out")) => Align::Out,
+        ("auto", _) => Align::Current,
+        (other, _) => return Err(bad(C, format!("align: current|in|out|auto, not `{other}`"))),
+    };
+    let span = Tick::from_seconds_f64(key_span(&preset));
     let effects: Vec<(&'static effectcraft_effects::EffectSpec, Value)> = preset
         .get("effects")
         .and_then(Value::as_array)
@@ -152,7 +188,11 @@ fn apply(s: &mut Session, p: &Value) -> Result<Value> {
         for (lid, size) in &sizes {
             let mut next = proj.next_id;
             let l = layer_mut(proj, cid, *lid)?;
-            let at = l.layer_time(now);
+            let at = l.layer_time(match align {
+                Align::Current => now,
+                Align::In => l.in_point,
+                Align::Out => l.out_point - span,
+            });
             if !effects.is_empty() {
                 let fx = l.props.sub_mut("effects").ok_or_else(|| bad(C, "this layer type has no effects"))?;
                 for (spec, ej) in &effects {
@@ -196,7 +236,15 @@ fn list(_: &mut Session, p: &Value) -> Result<Value> {
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!("anim.applyBuiltinPreset", "Apply Built-in Animation Preset", [], None, "{preset: id|name (see anim.builtinPresets), layers?}", has_layers, apply),
+        cmd!(
+            "anim.applyBuiltinPreset",
+            "Apply Built-in Animation Preset",
+            [],
+            None,
+            "{preset: id|name (see anim.builtinPresets), layers?, align?: current (default: start at the current time)|in (start at each layer's In point)|out (end on its Out point)|auto (in or out from the preset's direction)}",
+            has_layers,
+            apply
+        ),
         query!("anim.builtinPresets", "Built-in Animation Presets", "{category?}", list),
     ]
 }

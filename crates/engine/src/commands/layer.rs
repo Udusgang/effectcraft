@@ -255,7 +255,16 @@ fn add_item(s: &mut Session, p: &Value) -> Result<Value> {
     let cid = comp_id(s, p)?;
     let item = match p.get("item") {
         Some(Value::Number(n)) => ItemId(n.as_u64().unwrap_or(0)),
-        Some(Value::String(name)) => s.project.find_by_name(name).map(|i| i.id).ok_or_else(|| bad("layer.addItem", format!("no item `{name}`")))?,
+        // A folder can't be a layer, so a comp or footage item of the same name wins (imported
+        // templates often keep each comp in a folder named after it).
+        Some(Value::String(name)) => s
+            .project
+            .items
+            .values()
+            .find(|i| i.name == *name && !matches!(i.kind, ItemKind::Folder))
+            .or_else(|| s.project.find_by_name(name))
+            .map(|i| i.id)
+            .ok_or_else(|| bad("layer.addItem", format!("no item `{name}`")))?,
         _ => *s.state.project_selection.first().ok_or_else(|| bad("layer.addItem", "missing `item`"))?,
     };
     if s.project.comp_contains(item, cid) {
