@@ -146,6 +146,33 @@ fn master_properties_override_per_instance_push_and_revert() {
 }
 
 #[test]
+fn nested_master_property_overrides_per_outer_instance() {
+    // Card ▸ Wrapper (exposes the card instance's Card Color) ▸ Main with two wrappers: each
+    // outer instance shows its own colour, as AE's nested master properties (mogrt captions).
+    let (mut s, card, _, _) = card();
+    s.execute("comp.new", json!({"name": "Wrapper", "width": 64, "height": 64, "frameRate": 30, "duration": 2})).unwrap();
+    let wrapper = s.active_comp_id().unwrap();
+    let inner = s.execute("layer.addItem", json!({"item": card.0})).unwrap()["layer"].as_u64().unwrap();
+    let path = s.execute("essential.instance", json!({"layer": inner})).unwrap()["controls"][0]["path"].as_str().unwrap().to_string();
+    let ctl = s.execute("essential.addProperty", json!({"layer": inner, "path": path, "name": "Color"})).unwrap()["controls"][0].clone();
+    s.execute("comp.new", json!({"name": "Main", "width": 128, "height": 64, "frameRate": 30, "duration": 2})).unwrap();
+    let main = s.active_comp_id().unwrap();
+    let a = s.execute("layer.addItem", json!({"item": wrapper.0})).unwrap()["layer"].as_u64().unwrap();
+    let b = s.execute("layer.addItem", json!({"item": wrapper.0})).unwrap()["layer"].as_u64().unwrap();
+    s.execute("layer.setTransform", json!({"layers": [a], "prop": "position", "value": [32, 32, 0]})).unwrap();
+    s.execute("layer.setTransform", json!({"layers": [b], "prop": "position", "value": [96, 32, 0]})).unwrap();
+    s.execute("essential.set", json!({"layer": b, "control": ctl, "value": [0.0, 0.0, 1.0, 1.0]})).unwrap();
+    for collapse in [false, true] {
+        s.execute("layer.setSwitch", json!({"layer": a, "switch": "collapse", "value": collapse})).unwrap();
+        s.execute("layer.setSwitch", json!({"layer": b, "switch": "collapse", "value": collapse})).unwrap();
+        let img = s.render(main, Tick::ZERO, RenderOpts::default());
+        let (pa, pb) = (img.get(32, 32), img.get(96, 32));
+        assert!(pa[0] > 0.99 && pa[2] < 0.01, "instance a keeps the card's red (collapse {collapse}): {pa:?}");
+        assert!(pb[2] > 0.99 && pb[0] < 0.01, "instance b shows its override (collapse {collapse}): {pb:?}");
+    }
+}
+
+#[test]
 fn collapsed_instance_with_overrides_is_not_clipped_to_its_comp() {
     let (mut s, card, solid, ids) = card();
     // Half of the solid lies right of the 64×64 Card.

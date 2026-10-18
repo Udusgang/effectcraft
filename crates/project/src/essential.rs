@@ -682,10 +682,20 @@ pub fn with_overrides(project: &Project, comp: ItemId, overrides: &[Override]) -
             }
             EgKind::Property { .. } => {
                 for (layer, prop) in ctl.kind.targets() {
-                    if let Some(pr) = c.layer_mut(layer).and_then(|l| l.props.find_mut(prop)) {
+                    let Some(l) = c.layer_mut(layer) else { continue };
+                    if let Some(pr) = l.props.find_mut(prop) {
                         pr.keys.clear();
                         pr.value = o.value.clone();
                         any = true;
+                    }
+                    // A control exposing a nested instance's own Essential Property (AE's nested
+                    // master properties): the nested comp uses the value only when overridden.
+                    if let Some(g) = l.props.sub_mut(GROUP)
+                        && g.find(prop).is_some()
+                        && let GroupKind::Essential { overridden } = &mut g.kind
+                        && !overridden.contains(&prop)
+                    {
+                        overridden.push(prop);
                     }
                 }
             }
