@@ -111,7 +111,7 @@ pub(crate) fn effect_id(ae_match: &str) -> Option<&'static str> {
         "CC Star Burst" => "ec.sim.ccstarburst",
         "CC Toner" => "ec.color.cctoner",
         "CS BlockLoad" => "ec.stylize.ccblockload",
-        "CS Composite" => "ec.channel.cccomposite",
+        "CS Composite" | "CC Composite" => "ec.channel.cccomposite",
         "CS CrossBlur" => "ec.blur.cccross",
         "CS Vignette" => "ec.stylize.ccvignette",
         "CSRainfall" => "ec.sim.ccrainfall",
@@ -947,8 +947,9 @@ pub(crate) fn param_id(effect_id: &str, ae_param_match: &str) -> Option<&'static
         ("ec.stylize.ccblockload", "CS BlockLoad-0001") => "completion",
         ("ec.stylize.ccblockload", "CS BlockLoad-0003") => "startCleared",
         ("ec.stylize.ccblockload", "CS BlockLoad-0004") => "bilinear",
-        ("ec.channel.cccomposite", "CS Composite-0001") => "opacity",
-        ("ec.channel.cccomposite", "CS Composite-0003") => "rgbOnly",
+        ("ec.channel.cccomposite", "CS Composite-0001" | "CC Composite-0001") => "opacity",
+        ("ec.channel.cccomposite", "CS Composite-0002" | "CC Composite-0002") => "compositeOriginal",
+        ("ec.channel.cccomposite", "CS Composite-0003" | "CC Composite-0003") => "rgbOnly",
         ("ec.blur.cccross", "CS CrossBlur-0001") => "radiusX",
         ("ec.blur.cccross", "CS CrossBlur-0002") => "radiusY",
         ("ec.blur.cccross", "CS CrossBlur-0003") => "transferMode",
@@ -1174,6 +1175,10 @@ mod tests {
         assert_eq!(effect_id("ADBE Noise HLS Auto2"), Some("ec.noise.noisehlsauto"));
         assert_eq!(effect_id("ADBE Optics Compensation"), Some("ec.distort.opticscompensation"));
         assert_eq!(effect_id("CC RepeTile"), Some("ec.stylize.ccrepetile"));
+        // Newer AE saves CC Composite under its CC match name; older projects use CS.
+        assert_eq!(effect_id("CC Composite"), Some("ec.channel.cccomposite"));
+        assert_eq!(param_id("ec.channel.cccomposite", "CC Composite-0002"), Some("compositeOriginal"));
+        assert_eq!(param_id("ec.channel.cccomposite", "CS Composite-0003"), Some("rgbOnly"));
         assert_eq!(param_id("ec.noise.noisehlsauto", "ADBE Noise HLS Auto2-0003"), Some("lightness"));
         assert_eq!(param_id("ec.noise.noisehlsauto", "ADBE Noise HLS Auto2-0006"), Some("noiseAnimationSpeed"));
         assert_eq!(param_id("ec.distort.opticscompensation", "ADBE Optics Compensation-0004"), Some("viewCenter"));

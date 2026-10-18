@@ -49,7 +49,8 @@ fn lumetri(raw: &str, child: &Json, effect: &Json) -> bool {
         "ADBE Lumetri-0113" | "ADBE Lumetri-0114" | "ADBE Lumetri-0115" | "ADBE Lumetri-0116" | "ADBE Lumetri-0117" => {
             same(value, &json!([0.0, 0.0, 0.00392156862745098, 1.0]))
         }
-        "ADBE Lumetri-0102" => same(value, &json!(1)) && fixed(effect, "ADBE Lumetri-0124", json!(0)),
+        // Face Detection only steers a Color Match the user runs; older Lumetri versions have no 0124.
+        "ADBE Lumetri-0102" => same(value, &json!(1)) && (fixed(effect, "ADBE Lumetri-0124", json!(0)) || property(effect, "ADBE Lumetri-0124").is_none()),
         "ADBE Lumetri-0075" => same(value, &json!(1)),
         "ADBE Lumetri-0057" => same(value, &json!(1)) && fixed(effect, "ADBE Lumetri-0056", json!(0)),
         "ADBE Lumetri-0070" | "ADBE Lumetri-0071" | "ADBE Lumetri-0072" => same(value, &json!([0.0, 0.0, 0.0, 1.0])),

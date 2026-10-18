@@ -1115,6 +1115,40 @@ fn keep_environment_light_defaults(layer: &mut Layer, losses: &mut Vec<String>, 
     }
 }
 
+/// AE expressions may name properties by match name (`effect("Tint")("ADBE Color Control-0001")`,
+/// `layer("Logo")("ADBE Transform Group")("ADBE Position")`). Rewrite those string literals to the
+/// native match ids the expression engine resolves; anything the importer doesn't map is left as
+/// written.
+fn translate_expression(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(['"', '\'']) {
+        let quote = rest.as_bytes()[start] as char;
+        let Some(len) = rest[start + 1..].find(quote) else { break };
+        let literal = &rest[start + 1..start + 1 + len];
+        out.push_str(&rest[..=start]);
+        out.push_str(&native_expression_name(literal).unwrap_or_else(|| literal.to_owned()));
+        out.push(quote);
+        rest = &rest[start + 2 + len..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn native_expression_name(literal: &str) -> Option<String> {
+    // An effect parameter ("<effect match>-NNNN"); nested native paths have no single name.
+    if let Some((effect, _)) = literal.rsplit_once('-')
+        && let Some(native) = effects::effect_id(effect)
+    {
+        return effects::param_id(native, literal).filter(|path| !path.contains('/')).map(str::to_owned);
+    }
+    if let Some(native) = effects::effect_id(literal) {
+        return Some(native.to_owned());
+    }
+    let native = native_match(literal);
+    (literal.starts_with("ADBE ") && native != literal).then(|| native.to_owned())
+}
+
 fn native_match(ae: &str) -> &str {
     if let Some(shape) = shapes::native_match(ae) {
         return shape;
@@ -1523,23 +1557,54 @@ fn import_curves_state(group: &mut PropGroup, ir: &Json, losses: &mut Vec<String
         losses.push(format!("{context}: invalid AE Curves lookup tables"));
         return;
     }
+    let bytes: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap_or(0)).collect();
+    // After the 4-byte header: five 256-entry tables (RGB, Red, Green, Blue, Alpha), then one
+    // 72-byte block per channel holding its control points.
+    let mut shaped = [false; 5];
     for (i, name) in ["rgb", "red", "green", "blue", "alpha"].iter().enumerate() {
-        let start = 8 + i * 512;
+        let lut = &bytes[4 + i * 256..4 + (i + 1) * 256];
+        shaped[i] = lut.iter().enumerate().any(|(input, &value)| value != input as u8);
+        if !shaped[i] {
+            continue;
+        }
         if let Some(prop) = group.prop_mut(name) {
-            prop.value = Value::Str(format!("lut8:{}", &hex[start..start + 512]));
+            prop.value = Value::Str(curve_points(lut, &bytes[4 + 5 * 256 + i * 72..4 + 5 * 256 + (i + 1) * 72]));
         }
     }
-    if let Some(prop) = group.prop_mut("aeStateHex") {
-        prop.value = Value::Str(hex.to_owned());
+    if shaped[0] && shaped[1..4].iter().any(|&s| s) {
+        losses.push(format!("{context}: AE Curves master and individual-channel curves together: visual parity unverified"));
     }
-    if (1..5).any(|channel| {
-        (0..256).any(|input| {
-            let at = 8 + channel * 512 + input * 2;
-            hex.get(at..at + 2).and_then(|s| u8::from_str_radix(s, 16).ok()).is_none_or(|value| value != input as u8)
-        })
-    }) {
-        losses.push(format!("{context}: AE Curves individual-channel LUT visual parity unverified"));
+}
+
+/// Native curve points ("x,y …" in 0..1) for one AE Curves channel: its control points when the
+/// native spline through them reproduces AE's 8-bit table, else samples of the table close
+/// enough to stay within about a code value of it.
+fn curve_points(lut: &[u8], block: &[u8]) -> String {
+    let format = |points: &[(f32, f32)]| points.iter().map(|(x, y)| format!("{:.4},{:.4}", x / 255.0, y / 255.0)).collect::<Vec<_>>().join(" ");
+    let fits = |s: &str| {
+        effectcraft_effects::Curve::parse(s).is_some_and(|c| (0..256).all(|i| (c.eval(i as f32 / 255.0).clamp(0.0, 1.0) * 255.0 - lut[i] as f32).abs() <= 1.5))
+    };
+    // 16 (x, y) u16 pairs, then the number of points in use (AE holds the curve flat past its
+    // end points; the native spline extends them, so they are pinned to 0 and 255 here).
+    let word = |at: usize| u16::from_be_bytes([block[at], block[at + 1]]) as f32;
+    let count = word(66) as usize;
+    if (2..=16).contains(&count) {
+        let mut points: Vec<(f32, f32)> = (0..count).map(|k| (word(k * 4), word(k * 4 + 2))).collect();
+        if points.windows(2).all(|w| w[0].0 < w[1].0) && points.iter().all(|&(x, y)| x <= 255.0 && y <= 255.0) {
+            if points[0].0 > 0.0 {
+                points.insert(0, (0.0, points[0].1));
+            }
+            if points[points.len() - 1].0 < 255.0 {
+                points.push((255.0, points[points.len() - 1].1));
+            }
+            let s = format(&points);
+            if fits(&s) {
+                return s;
+            }
+        }
     }
+    let sampled = |step: usize| format(&(0..256).step_by(step).chain([255]).collect::<std::collections::BTreeSet<_>>().into_iter().map(|i| (i as f32, lut[i] as f32)).collect::<Vec<_>>());
+    [16, 8, 4, 2].into_iter().map(sampled).find(|s| fits(s)).unwrap_or_else(|| sampled(1))
 }
 
 fn import_native_effect_params(
@@ -1600,7 +1665,15 @@ fn import_native_effect_params(
             continue;
         };
         let Some(prop) = group.prop_mut(path) else {
-            losses.push(format!("{context}: native {effect_id} parameter {path} missing"));
+            // Lumetri's section switches: a section that is on is what the native effect always does.
+            let section_on = effect_id == "ec.color.lumetri"
+                && (path.ends_with("/active") || path.ends_with("Active"))
+                && value_json.as_f64() == Some(1.0)
+                && array(child, "keyframes").is_empty()
+                && string(child, &["expression"]).unwrap_or("").is_empty();
+            if !section_on {
+                losses.push(format!("{context}: native {effect_id} parameter {path} missing"));
+            }
             continue;
         };
         let value_type = string(child, &["value_type"]).unwrap_or("");
@@ -1709,7 +1782,7 @@ fn fill_property_mapped(
         losses.push(format!("{context}: invalid AE layer selector on {raw}"));
     }
     if let Some(expr) = string(ir, &["expression"]).filter(|s| !s.is_empty()) {
-        prop.expr = Some(effectcraft_project::Expression { text: expr.to_owned(), enabled: boolean(ir, &["expression_enabled"]).unwrap_or(false) });
+        prop.expr = Some(effectcraft_project::Expression { text: translate_expression(expr), enabled: boolean(ir, &["expression_enabled"]).unwrap_or(false) });
     }
     for key in array(ir, "keyframes") {
         let Some(time) = number(key, &["time"]) else {
@@ -2908,6 +2981,51 @@ mod tests {
         let visible: Vec<_> = frame.data.iter().filter(|p| p[3] > 0.9).collect();
         assert!(!visible.is_empty());
         assert!(visible.iter().all(|p| p[0] < 0.2 && p[2] > p[0]), "saved blue gradient must not fall back to white/black");
+    }
+
+    #[test]
+    fn expressions_naming_ae_match_names_use_native_ids() {
+        assert_eq!(
+            translate_expression(r#"comp("Render Comp").layer("CONTROLS").effect("Text A")("ADBE Color Control-0001")"#),
+            r#"comp("Render Comp").layer("CONTROLS").effect("Text A")("color")"#
+        );
+        assert_eq!(
+            translate_expression(r#"thisComp.layer('Logo')("ADBE Transform Group")("ADBE Position") + effect("ADBE Slider Control")(1)"#),
+            r#"thisComp.layer('Logo')("transform")("position") + effect("ec.control.slider")(1)"#
+        );
+        // Display names, unknown match names and nested native paths stay as written.
+        for text in [r#"effect("Slider Control")("Slider")"#, r#"effect("X")("ADBE Nope-0001")"#, r#"effect("L")("ADBE Lumetri-0011")"#, "wiggle(2, 30)", r#"x = "it's"; y"#] {
+            assert_eq!(translate_expression(text), text);
+        }
+    }
+
+    #[test]
+    fn ae_curves_tables_become_native_points_within_a_code_value() {
+        let block = |points: &[(u16, u16)]| {
+            let mut b = [0u8; 72];
+            for (k, (x, y)) in points.iter().enumerate() {
+                b[k * 4..k * 4 + 2].copy_from_slice(&x.to_be_bytes());
+                b[k * 4 + 2..k * 4 + 4].copy_from_slice(&y.to_be_bytes());
+            }
+            b[66..68].copy_from_slice(&(points.len() as u16).to_be_bytes());
+            b
+        };
+        // A shadow lift held flat below its first point (as in the History Timeline template),
+        // a smooth contrast curve without usable points, and a straight line kept as its points.
+        let lift: Vec<u8> = (0..256).map(|i| if i <= 26 { 33 } else { (33.0 + (i - 26) as f32 * 222.0 / 229.0).round() as u8 }).collect();
+        let contrast: Vec<u8> = (0..256).map(|i| {
+            let t = i as f32 / 255.0;
+            (t * t * (3.0 - 2.0 * t) * 255.0).round() as u8
+        }).collect();
+        let line: Vec<u8> = (0..256).map(|i| (i as f32 * 200.0 / 255.0).round() as u8).collect();
+        for (lut, points) in [(&lift, block(&[(26, 33), (255, 255)])), (&contrast, [0u8; 72]), (&line, block(&[(0, 0), (255, 200)]))] {
+            let s = curve_points(lut, &points);
+            let curve = effectcraft_effects::Curve::parse(&s).unwrap();
+            for i in 0..256 {
+                assert!((curve.eval(i as f32 / 255.0) * 255.0 - lut[i] as f32).abs() <= 1.5, "{s} at {i}");
+            }
+        }
+        assert_eq!(curve_points(&line, &block(&[(0, 0), (255, 200)])), "0.0000,0.0000 1.0000,0.7843");
     }
 
     #[test]
