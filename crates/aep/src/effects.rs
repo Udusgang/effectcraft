@@ -80,6 +80,7 @@ pub(crate) fn effect_id(ae_match: &str) -> Option<&'static str> {
         "ADBE Texturize" => "ec.stylize.texturize",
         "ADBE Tile" => "ec.stylize.motiontile",
         "ADBE Tint" => "ec.color.tint",
+        "ADBE PhotoFilterPS" => "ec.color.photofilter",
         "ADBE Tritone" => "ec.color.tritone",
         "ADBE Turbulent Displace" => "ec.distort.turbulentdisplace",
         "ADBE Twirl" => "ec.distort.twirl",
@@ -162,6 +163,7 @@ pub(crate) fn param_id(effect_id: &str, ae_param_match: &str) -> Option<&'static
         ("ec.color.blackwhite", "ADBE Black&White-0004") => "cyans",
         ("ec.color.blackwhite", "ADBE Black&White-0005") => "blues",
         ("ec.color.blackwhite", "ADBE Black&White-0006") => "magentas",
+        ("ec.color.blackwhite", "ADBE Black&White-0007") => "tint",
         ("ec.color.blackwhite", "ADBE Black&White-0008") => "tintColor",
         ("ec.blur.fastbox", "ADBE Box Blur2-0001") => "radius",
         ("ec.blur.fastbox", "ADBE Box Blur2-0002") => "iterations",
@@ -637,6 +639,11 @@ pub(crate) fn param_id(effect_id: &str, ae_param_match: &str) -> Option<&'static
         ("ec.stylize.motiontile", "ADBE Tile-0006") => "mirrorEdges",
         ("ec.stylize.motiontile", "ADBE Tile-0007") => "phase",
         ("ec.stylize.motiontile", "ADBE Tile-0008") => "horizontalPhaseShift",
+        // Photo Filter: the Filter popup lists AE's presets in AE's order, Custom last.
+        ("ec.color.photofilter", "ADBE PhotoFilterPS-0001") => "filter",
+        ("ec.color.photofilter", "ADBE PhotoFilterPS-0002") => "color",
+        ("ec.color.photofilter", "ADBE PhotoFilterPS-0003") => "density",
+        ("ec.color.photofilter", "ADBE PhotoFilterPS-0004") => "preserveLuminosity",
         ("ec.color.tint", "ADBE Tint-0001") => "black",
         ("ec.color.tint", "ADBE Tint-0002") => "white",
         ("ec.color.tint", "ADBE Tint-0003") => "amount",
@@ -1180,6 +1187,9 @@ mod tests {
         assert_eq!(effect_id("CC RepeTile"), Some("ec.stylize.ccrepetile"));
         assert!(control_only("Pseudo/mCloner_Pro_v2") && control_only("Pseudo/0.18402704679566062"));
         assert_eq!(param_id("ec.blur.cameralens", "ADBE Camera Lens Blur-0021"), Some("repeatEdge"));
+        assert_eq!(effect_id("ADBE PhotoFilterPS"), Some("ec.color.photofilter"));
+        assert_eq!(param_id("ec.color.photofilter", "ADBE PhotoFilterPS-0003"), Some("density"));
+        assert_eq!(param_id("ec.color.blackwhite", "ADBE Black&White-0007"), Some("tint"));
         // Newer AE saves CC Composite under its CC match name; older projects use CS.
         assert_eq!(effect_id("CC Composite"), Some("ec.channel.cccomposite"));
         assert_eq!(param_id("ec.channel.cccomposite", "CC Composite-0002"), Some("compositeOriginal"));
