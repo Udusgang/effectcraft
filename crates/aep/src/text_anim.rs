@@ -43,6 +43,27 @@ pub(crate) fn native_match(parent: &str, ae: &str, authored: Option<bool>) -> Op
         ("properties", "ADBE Text Rotation") if authored == Some(true) => "rotation",
         ("properties", "ADBE Text Rotation X") if authored == Some(true) => "rotationX",
         ("properties", "ADBE Text Rotation Y") if authored == Some(true) => "rotationY",
+        // Character colour, stroke, skew and character-change properties the text renderer applies.
+        ("properties", "ADBE Text Anchor Point 3D") if authored == Some(true) => "anchor",
+        ("properties", "ADBE Text Skew") if authored == Some(true) => "skew",
+        ("properties", "ADBE Text Skew Axis") if authored == Some(true) => "skewAxis",
+        ("properties", "ADBE Text Fill Color") if authored == Some(true) => "fillColor",
+        ("properties", "ADBE Text Stroke Color") if authored == Some(true) => "strokeColor",
+        ("properties", "ADBE Text Fill Hue") if authored == Some(true) => "fillHue",
+        ("properties", "ADBE Text Fill Saturation") if authored == Some(true) => "fillSaturation",
+        ("properties", "ADBE Text Fill Brightness") if authored == Some(true) => "fillBrightness",
+        ("properties", "ADBE Text Stroke Hue") if authored == Some(true) => "strokeHue",
+        ("properties", "ADBE Text Stroke Saturation") if authored == Some(true) => "strokeSaturation",
+        ("properties", "ADBE Text Stroke Brightness") if authored == Some(true) => "strokeBrightness",
+        ("properties", "ADBE Text Fill Opacity") if authored == Some(true) => "fillOpacity",
+        ("properties", "ADBE Text Stroke Opacity") if authored == Some(true) => "strokeOpacity",
+        ("properties", "ADBE Text Stroke Width") if authored == Some(true) => "strokeWidth",
+        ("properties", "ADBE Text Line Anchor") if authored == Some(true) => "lineAnchor",
+        ("properties", "ADBE Text Line Spacing") if authored == Some(true) => "lineSpacing",
+        ("properties", "ADBE Text Character Offset") if authored == Some(true) => "characterOffset",
+        ("properties", "ADBE Text Character Replace") if authored == Some(true) => "characterValue",
+        ("properties", "ADBE Text Character Range") if authored == Some(true) => "characterRange",
+        ("properties", "ADBE Text Character Change Type") if authored == Some(true) => "characterAlignment",
         // Expression Selector: Based On, and an Amount an expression sets per character
         // (textIndex, textTotal, selectorValue).
         ("selectors", "ADBE Text Expressible Selector") => "expressionSelector",
@@ -57,7 +78,7 @@ pub(crate) fn template(parent: &str, id: &str) -> Option<Value> {
         ("advanced", "units" | "basedOn" | "mode" | "shape") => Some(Value::Enum(0)),
         ("advanced", "randomize") => Some(Value::Bool(false)),
         // AE's popups count from 1, the native ones from 0 (the importer subtracts one).
-        ("properties", "trackingType") | ("expressionSelector", "basedOn") => Some(Value::Enum(0)),
+        ("properties", "trackingType" | "characterRange" | "characterAlignment") | ("expressionSelector", "basedOn") => Some(Value::Enum(0)),
         _ => None,
     }
 }
@@ -102,7 +123,9 @@ pub(crate) fn fully_supported(ir: &Json) -> bool {
                             continue;
                         }
                         let Some(ae) = prop.get("match_name").and_then(Json::as_str) else { return false };
-                        if native_match("properties", ae, Some(true)).is_none() || has_expression(prop) {
+                        // An expression on an animator property is evaluated once per frame, as in
+                        // AE (only the Expression Selector's Amount runs per character).
+                        if native_match("properties", ae, Some(true)).is_none() {
                             return false;
                         }
                         has_operation = true;
@@ -132,7 +155,7 @@ fn selector_supported(group: &Json, parent: &str) -> bool {
         }
         let Some(ae) = child.get("match_name").and_then(Json::as_str) else { return false };
         let mapped_parent = if parent == "rangeSelector" { "advanced" } else { "rangeSelector" };
-        native_match(mapped_parent, ae, Some(true)).is_some() && !has_expression(child)
+        native_match(mapped_parent, ae, Some(true)).is_some()
     })
 }
 
@@ -147,10 +170,6 @@ fn expressible_supported(group: &Json) -> bool {
     })
 }
 
-fn has_expression(prop: &Json) -> bool {
-    prop.get("expression_enabled").and_then(Json::as_bool) == Some(true)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,7 +179,10 @@ mod tests {
     fn authored_scale_blur_and_word_range_are_native() {
         assert_eq!(native_match("properties", "ADBE Text Scale 3D", Some(true)), Some("scale"));
         assert_eq!(native_match("properties", "ADBE Text Scale 3D", Some(false)), None);
-        assert_eq!(native_match("properties", "ADBE Text Fill Color", Some(true)), None);
+        assert_eq!(native_match("properties", "ADBE Text Fill Color", Some(true)), Some("fillColor"));
+        assert_eq!(native_match("properties", "ADBE Text Character Change Type", Some(true)), Some("characterAlignment"));
+        assert_eq!(template("properties", "characterAlignment"), Some(Value::Enum(0)));
+        assert_eq!(native_match("properties", "ADBE 3DText Front Hue", Some(true)), None);
         assert_eq!(native_match("advanced", "ADBE Text Range Type2", Some(true)), Some("basedOn"));
         assert_eq!(template("advanced", "basedOn"), Some(Value::Enum(0)));
 
@@ -172,13 +194,19 @@ mod tests {
             {"match_name":"ADBE Text Animator Properties","children":[
                 {"match_name":"ADBE Text Scale 3D","authored":true,"value":[0,0,0]},
                 {"match_name":"ADBE Text Blur","authored":true,"value":[40,40]},
-                {"match_name":"ADBE Text Fill Color","authored":false,"value":[1,0,0,1]}
+                {"match_name":"ADBE 3DText Front Hue","authored":false,"value":0}
             ]}
         ]}]});
         assert!(fully_supported(&ir));
         let mut unsupported = ir.clone();
         unsupported["children"][0]["children"][1]["children"][2]["authored"] = json!(true);
         assert!(!fully_supported(&unsupported));
+        // Controls driven by expressions (sliders on a control layer) are evaluated natively.
+        let mut driven = ir.clone();
+        driven["children"][0]["children"][1]["children"][1]["expression"] = json!("thisComp.layer(\"Control\").effect(\"Blur\")(\"slider\")");
+        driven["children"][0]["children"][1]["children"][1]["expression_enabled"] = json!(true);
+        driven["children"][0]["children"][0]["children"][0]["children"][0]["expression_enabled"] = json!(true);
+        assert!(fully_supported(&driven));
         let mut old_ir = ir;
         old_ir["children"][0]["children"][1]["children"][0].as_object_mut().unwrap().remove("authored");
         assert!(!fully_supported(&old_ir));

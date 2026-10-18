@@ -850,7 +850,7 @@ fn emit_layer<'a>(r: &Renderer<'a>, ctx: &EvalCtx<'a>, layer: &Layer, b: &mut Bu
     if layer.environment || layer.switches.adjustment || ctx.opacity(layer) <= 0.0 || !layer.has_video() {
         return;
     }
-    if let Some(item) = r.collapsed(ctx, layer) {
+    if let Some(item) = r.collapsed_3d(ctx, layer) {
         collapsed_layer(r, ctx, layer, item, b);
     } else if layer.source.is_model() {
         model_layer(r, ctx, layer, b);

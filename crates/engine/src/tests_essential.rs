@@ -146,6 +146,34 @@ fn master_properties_override_per_instance_push_and_revert() {
 }
 
 #[test]
+fn collapsed_instance_with_overrides_is_not_clipped_to_its_comp() {
+    let (mut s, card, solid, ids) = card();
+    // Half of the solid lies right of the 64×64 Card.
+    s.execute("prop.set", json!({"comp": card.0, "layer": solid, "path": "transform/position", "value": [80, 32]})).unwrap();
+    s.execute("comp.new", json!({"name": "Main", "width": 128, "height": 128, "frameRate": 30, "duration": 2})).unwrap();
+    let main = s.active_comp_id().unwrap();
+    let a = s.execute("layer.addItem", json!({"item": card.0})).unwrap()["layer"].as_u64().unwrap();
+    s.execute("layer.setSwitch", json!({"layer": a, "switch": "collapse", "value": true})).unwrap();
+    s.execute("essential.set", json!({"layer": a, "control": ids["color"], "value": [0.0, 0.0, 1.0, 1.0]})).unwrap();
+    // Collapsed as in After Effects: the part outside the Card shows, in the instance's colour.
+    let img = s.render(main, Tick::ZERO, RenderOpts::default());
+    for x in [90, 110] {
+        let px = img.get(x, 36);
+        assert!(px[2] > 0.99 && px[0] < 0.01 && px[3] > 0.99, "x {x}: {px:?}");
+    }
+    // An effect on the collapsed layer runs after its transformations, on everything it shows.
+    s.execute("effect.apply", json!({"layer": a, "effect": "Fill"})).unwrap();
+    s.execute("prop.set", json!({"layer": a, "path": "effects/#1/color", "value": [0.0, 1.0, 0.0, 1.0]})).unwrap();
+    let img = s.render(main, Tick::ZERO, RenderOpts::default());
+    for x in [90, 110] {
+        let px = img.get(x, 36);
+        assert!(px[1] > 0.99 && px[2] < 0.01 && px[3] > 0.99, "filled x {x}: {px:?}");
+    }
+    // Nothing nested reaches the bottom-left corner: it stays empty.
+    assert_eq!(img.get(4, 124)[3], 0.0, "{:?}", img.get(4, 124));
+}
+
+#[test]
 fn mirrored_and_linked_properties() {
     let (mut s, card, solid, ids) = card();
     let opacity = ids["opacity"].as_u64().unwrap();

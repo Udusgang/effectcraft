@@ -198,6 +198,8 @@ pub(crate) fn param_id(effect_id: &str, ae_param_match: &str) -> Option<&'static
         ("ec.blur.cameralens", "ADBE Camera Lens Blur-0017") => "highlight/specularBrightness",
         ("ec.blur.cameralens", "ADBE Camera Lens Blur-0018") => "highlight/specularThreshold",
         ("ec.blur.cameralens", "ADBE Camera Lens Blur-0019") => "highlight/highlightSaturation",
+        // Edge Behavior › Repeat Edge Pixels.
+        ("ec.blur.cameralens", "ADBE Camera Lens Blur-0021") => "repeatEdge",
         ("ec.blur.cameralens", "ADBE Camera Lens Blur-0022") => "useLinear",
         ("ec.stylize.cartoon", "ADBE Cartoonify-0001") => "render",
         ("ec.stylize.cartoon", "ADBE Cartoonify-0002") => "detailRadius",
@@ -1127,9 +1129,10 @@ pub(crate) fn inert_diagnostic(effect_id: &str, raw: &str, value: &serde_json::V
     false
 }
 
-/// These exact AE effects expose expression controls and do not render pixels.
+/// These exact AE effects expose expression controls and do not render pixels. Pseudo effects
+/// (`Pseudo/…`, custom control panels saved as presets) are sliders and checkboxes only.
 pub(crate) fn control_only(ae_match: &str) -> bool {
-    matches!(ae_match, "ADBE CM CropEdges" | "ADBE CM LightLeaksRandom" | "ADBE CM WigglePosition")
+    matches!(ae_match, "ADBE CM CropEdges" | "ADBE CM LightLeaksRandom" | "ADBE CM WigglePosition") || ae_match.starts_with("Pseudo/")
 }
 
 #[cfg(test)]
@@ -1175,6 +1178,8 @@ mod tests {
         assert_eq!(effect_id("ADBE Noise HLS Auto2"), Some("ec.noise.noisehlsauto"));
         assert_eq!(effect_id("ADBE Optics Compensation"), Some("ec.distort.opticscompensation"));
         assert_eq!(effect_id("CC RepeTile"), Some("ec.stylize.ccrepetile"));
+        assert!(control_only("Pseudo/mCloner_Pro_v2") && control_only("Pseudo/0.18402704679566062"));
+        assert_eq!(param_id("ec.blur.cameralens", "ADBE Camera Lens Blur-0021"), Some("repeatEdge"));
         // Newer AE saves CC Composite under its CC match name; older projects use CS.
         assert_eq!(effect_id("CC Composite"), Some("ec.channel.cccomposite"));
         assert_eq!(param_id("ec.channel.cccomposite", "CC Composite-0002"), Some("compositeOriginal"));

@@ -189,7 +189,11 @@ fn draw_collapsed<'a>(e: &mut Enc, r: &Renderer<'a>, ctx: &EvalCtx<'a>, layer: &
         return Some(());
     }
     let matte = r.track_matte(ctx, layer).is_some();
-    if layer.blend_mode == BlendMode::Normal && !matte && !layer.preserve_transparency {
+    // An instance with Essential Properties overrides draws from its own copy of the project.
+    let own = r.with_instance_values(ctx, layer, item);
+    let r = &r.with_project(own.as_ref());
+    let fx = Renderer::collapsed_effects(layer);
+    if layer.blend_mode == BlendMode::Normal && !matte && !layer.preserve_transparency && !fx {
         if let Some((sub, nctx)) = r.collapse_into(ctx, layer, item, opacity) {
             draw_comp(e, &sub, &nctx, canvas)?;
         }
@@ -198,6 +202,24 @@ fn draw_collapsed<'a>(e: &mut Enc, r: &Renderer<'a>, ctx: &EvalCtx<'a>, layer: &
     let Some((sub, nctx)) = r.collapse_into(ctx, layer, item, 1.0) else { return Some(()) };
     let mut iso = e.zeros(canvas.width, canvas.height);
     draw_comp(e, &sub, &nctx, &mut iso)?;
+    if fx {
+        // `Renderer::draw_collapsed`: the effects run on the nested layers as drawn in this comp.
+        let pipe = r.pipe();
+        let drawn = match pipe.from_blend() {
+            Some(c) => ops::convert(e, &iso, &c),
+            None => iso,
+        };
+        let mut chain = crate::effects::GpuFx::new(e, drawn, [0.0; 2], r.opts.scale, pipe.levels);
+        r.run_effects_on(ctx, layer, true, &mut chain);
+        let (out, _, _) = chain.finish()?;
+        if out.width != canvas.width || out.height != canvas.height {
+            return Some(());
+        }
+        iso = match pipe.to_blend() {
+            Some(c) => ops::convert(e, &out, &c),
+            None => out,
+        };
+    }
     composite_iso(e, r, ctx, layer, iso, canvas, opacity)
 }
 

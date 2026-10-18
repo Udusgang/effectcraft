@@ -846,17 +846,43 @@ impl<'a> Renderer<'a> {
         if layer.masks().is_some_and(|m| !m.children.is_empty()) {
             return None;
         }
-        if layer.switches.effects && layer.effects().is_some_and(|fx| fx.groups().any(|g| g.enabled)) {
-            return None;
-        }
         if styles::active(ctx, layer) {
             return None;
         }
-        // Instance overrides (Essential Properties) need the nested comp rendered on its own.
-        if !effectcraft_project::essential::overridden(layer).is_empty() {
-            return None;
-        }
+        // Effects and instance overrides (Essential Properties) still collapse, as in After
+        // Effects: the 2D paths run the effects after the transformations, on the nested layers
+        // drawn in this comp's space ([`Renderer::collapsed_effects`]), and draw an overriding
+        // instance from a copy holding its values ([`Renderer::with_instance_values`]). 3D
+        // scenes use [`Renderer::collapsed_3d`].
         Some(*item)
+    }
+
+    /// [`Renderer::collapsed`] for the 3D scene builders, whose items borrow the nested layers
+    /// for the whole frame: an instance with effects or Essential Properties overrides is drawn
+    /// flattened.
+    pub fn collapsed_3d(&self, ctx: &EvalCtx, layer: &Layer) -> Option<ItemId> {
+        self.collapsed(ctx, layer)
+            .filter(|_| !Self::collapsed_effects(layer) && effectcraft_project::essential::overridden(layer).is_empty())
+    }
+
+    /// Whether a collapsed precomp layer runs effects (on its nested layers drawn in comp space).
+    pub fn collapsed_effects(layer: &Layer) -> bool {
+        layer.switches.effects && layer.effects().is_some_and(|fx| fx.groups().any(|g| g.enabled))
+    }
+
+    /// The project with `layer`'s Essential Properties overrides applied to its nested comp, when
+    /// it has any: a collapsed instance draws its nested layers from it.
+    pub fn with_instance_values(&self, ctx: &EvalCtx, layer: &Layer, item: ItemId) -> Option<Project> {
+        let ov = essential_overrides(ctx, layer);
+        if ov.is_empty() { None } else { effectcraft_project::essential::with_overrides(self.project, item, &ov) }
+    }
+
+    /// This renderer drawing from `project` (an instance's copy, or this renderer's own project).
+    pub fn with_project<'b>(&self, project: Option<&'b Project>) -> Renderer<'b>
+    where
+        'a: 'b,
+    {
+        Renderer { project: project.unwrap_or(self.project), ..*self }
     }
 
     /// A renderer and context that draw a collapsed precomp's layers straight into this comp:
@@ -869,7 +895,8 @@ impl<'a> Renderer<'a> {
         if !nc.covers(t) {
             return None;
         }
-        let nctx = EvalCtx { comp_id: item, comp: nc, time: t, ..*ctx };
+        // `self.project` is the instance's own copy when it overrides Essential Properties.
+        let nctx = EvalCtx { project: self.project, comp_id: item, comp: nc, time: t, ..*ctx };
         let (l2c, _) = ctx.layer_to_comp(layer);
         let outer = Some(self.outer.map_or(l2c, |o| o * l2c));
         let world = ctx.world_matrix(layer);
@@ -904,15 +931,35 @@ impl<'a> Renderer<'a> {
             return Region::Empty;
         }
         let matte = layer.track_matte.is_some_and(|tm| tm.layer != layer.id && ctx.comp.layer(tm.layer).is_some());
-        if layer.blend_mode == BlendMode::Normal && !matte && !layer.preserve_transparency {
-            if let Some((sub, nctx)) = self.collapse_into(ctx, layer, item, opacity) {
+        let own = self.with_instance_values(ctx, layer, item);
+        let this = self.with_project(own.as_ref());
+        let fx = Self::collapsed_effects(layer);
+        if layer.blend_mode == BlendMode::Normal && !matte && !layer.preserve_transparency && !fx {
+            if let Some((sub, nctx)) = this.collapse_into(ctx, layer, item, opacity) {
                 sub.draw_comp(&nctx, canvas, blank);
             }
             return Region::Empty;
         }
-        let Some((sub, nctx)) = self.collapse_into(ctx, layer, item, 1.0) else { return Region::Empty };
+        let Some((sub, nctx)) = this.collapse_into(ctx, layer, item, 1.0) else { return Region::Empty };
         let mut iso = Image::new(canvas.width, canvas.height);
         sub.draw_comp(&nctx, &mut iso, true);
+        if fx {
+            // The effects run on the nested layers as drawn in this comp (in the working space,
+            // like an adjustment layer's), so nothing is cut at the nested comp's edges.
+            let o = self.roi_offset().map(|(x, y, _, _)| [-x, -y]).unwrap_or([0.0; 2]);
+            let mut buf = Buf { img: iso, offset: o, scale: self.opts.scale };
+            if let Some(c) = self.pipe.from_blend() {
+                color::convert(&mut buf.img, &c);
+            }
+            let mut out = self.apply_effects(ctx, layer, buf, true);
+            if let Some(c) = self.pipe.to_blend() {
+                color::convert(&mut out.img, &c);
+            }
+            if out.img.width != canvas.width || out.img.height != canvas.height {
+                return Region::Empty;
+            }
+            iso = out.img;
+        }
         self.composite_iso(ctx, layer, iso, canvas, opacity);
         Region::Full
     }

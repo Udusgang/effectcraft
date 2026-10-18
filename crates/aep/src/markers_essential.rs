@@ -113,6 +113,29 @@ pub(super) fn overrides(project: &mut Project, layer: &mut Layer, ir: &Json, los
     }
 }
 
+/// The native match id an Essential Property's AE source property has after import, and for an
+/// effect parameter ("ADBE Slider Control-0001" → "slider") the native effect that holds it.
+fn native_source_match(ae: &str) -> (&str, Option<&'static str>) {
+    if let Some((effect, _)) = ae.rsplit_once('-')
+        && let Some(native) = super::effects::effect_id(effect)
+        && let Some(path) = super::effects::param_id(native, ae)
+    {
+        return (path.rsplit('/').next().unwrap_or(path), Some(native));
+    }
+    (super::text_anim::native_match("properties", ae, Some(true)).unwrap_or_else(|| native_match(ae)), None)
+}
+
+/// Calls `f` with every property matching `wanted` and the group holding it.
+fn collect<'a>(g: &'a PropGroup, wanted: &str, f: &mut dyn FnMut(&'a PropGroup, &'a Property)) {
+    for node in &g.children {
+        match node {
+            Node::Prop(p) if p.match_id == wanted => f(g, p),
+            Node::Prop(_) => {}
+            Node::Group(inner) => collect(inner, wanted, f),
+        }
+    }
+}
+
 /// Bind imported instance properties to unambiguous properties of their nested comp.
 /// An ambiguous or missing source remains editable and receives an explicit loss.
 pub(super) fn bind(project: &mut Project, losses: &mut Vec<String>) {
@@ -124,7 +147,11 @@ pub(super) fn bind(project: &mut Project, losses: &mut Vec<String>) {
             .iter()
             .filter_map(|layer| {
                 let LayerSource::Comp { item } = &layer.source else { return None };
-                let group = layer.props.sub(essential::GROUP)?;
+                // Instances bound by an earlier import into the same project are done.
+                let group = layer
+                    .props
+                    .sub(essential::GROUP)
+                    .filter(|g| !g.children.iter().filter_map(Node::as_prop).all(|p| essential::control_of(&p.match_id).is_some()))?;
                 Some((layer.id, layer.name.clone(), *item, group.clone()))
             })
             .collect();
@@ -133,17 +160,26 @@ pub(super) fn bind(project: &mut Project, losses: &mut Vec<String>) {
             let mut eg = source.essential.clone().unwrap_or_else(|| EssentialGraphics { name: String::new(), controls: Vec::new() });
             let mut assignments = Vec::new();
             for child in group.children.iter().filter_map(Node::as_prop) {
-                let wanted = if child.match_id == "ADBE EP Text Document" { "sourceText" } else { native_match(&child.match_id) };
+                let (wanted, effect) = if child.match_id == "ADBE EP Text Document" { ("sourceText", None) } else { native_source_match(&child.match_id) };
                 let mut candidates = Vec::new();
                 for source_layer in &source.layers {
                     if source_layer.comment.starts_with(IMPLICIT_CAMERA_COMMENT) {
                         continue;
                     }
-                    source_layer.props.walk("", &mut |_, p| {
-                        if p.match_id == wanted {
-                            candidates.push((source_layer.id, p.uid, p.value.clone(), p.keys.clone()));
+                    collect(&source_layer.props, wanted, &mut |group, p| {
+                        // A Color Control's colour, not a Fill's.
+                        if effect.is_none_or(|e| group.match_id == e) {
+                            candidates.push((source_layer.id, p.uid, p.value.clone(), p.keys.clone(), group.name.clone()));
                         }
                     });
+                }
+                // Several expression controls of one kind (a Control layer's sliders): AE names the
+                // Essential Property after its effect ("Blur" is the Blur slider).
+                if candidates.len() > 1 {
+                    let named: Vec<_> = candidates.iter().filter(|c| c.4 == child.name).cloned().collect();
+                    if named.len() == 1 {
+                        candidates = named;
+                    }
                 }
                 if candidates.len() != 1 {
                     losses.push(format!(
@@ -155,7 +191,7 @@ pub(super) fn bind(project: &mut Project, losses: &mut Vec<String>) {
                     ));
                     continue;
                 }
-                let (source_layer, source_prop, source_value, source_keys) = candidates.remove(0);
+                let (source_layer, source_prop, source_value, source_keys, _) = candidates.remove(0);
                 let control_id = eg
                     .controls
                     .iter()

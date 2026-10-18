@@ -452,7 +452,7 @@ fn gather<'a>(r: &Renderer<'a>, ctx: &EvalCtx<'a>, run: &[&'a Layer], out: (u32,
         .flat_map_iter(|(i, l)| {
             // Stack order with room for a collapsed precomp's layers in between.
             let i = i * 1024;
-            if let Some(item) = r.collapsed(ctx, l) {
+            if let Some(item) = r.collapsed_3d(ctx, l) {
                 return collapsed_items(r, ctx, l, item, i, out);
             }
             let mut its = prepare_all(r, ctx, l, i, out, true);
