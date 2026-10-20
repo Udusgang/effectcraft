@@ -1705,6 +1705,15 @@ fn import_native_effect_params(
                 "opacity" | "strokeOptions/curviness" | "strokeOptions/curvinessVariation" => 100.0,
                 _ => 1.0,
             }
+        } else if matches!(effect_id, "ec.generate.beam" | "ec.transition.ccradialscalewipe" | "ec.distort.polar"
+            | "ec.generate.audiospectrum" | "ec.generate.audiowaveform")
+        {
+            match path {
+                // AE stores these percentages as 0..1 fractions (HUD Sci-Fi's Beam: Length 1.0,
+                // Time keyed 1.0 -> 0.5; Solar System's CC Radial ScaleWipe: 0.58).
+                "length" | "time" | "softness" | "completion" | "interpolation" => 100.0,
+                _ => 1.0,
+            }
         } else if effect_id == "ec.generate.radiowaves" {
             match path {
                 // AE's 0..1 Opacity: 1 draws the waves at half strength (measured with aerender).
